@@ -33,7 +33,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 7. Auszahlung: erst Minus-Buchung, dann Endstand prüfen, bei < 0 zurückdrehen (Schutz vor Doppelanfragen). Diese Reihenfolge nicht „optimieren". Wird ein Auftrag abgelehnt (Dienstfehler, PayPal DENIED), kommt das Geld als `korrektur`-Buchung zurück; `db.auszahlungAbschliessen` setzt den Status nur aus `laeuft`/`pruefung` heraus, damit nie doppelt zurückgebucht wird.
 8. Fehlermeldungen an Nutzer auf Deutsch, per Du, ohne Technik-Details. Interne Kommentare bleiben im Stil der bestehenden Dateien (Deutsch).
 9. Betrugsregeln (`REGELN` in server.js): Gewichte nur ändern, wenn die Aufgabe es verlangt. Neue Kennzahlen in `db.kennzahlenFuer` ergänzen, Standardwert immer „unauffällig".
-10. Nichts von Apple/Google-Richtlinien Relevantes entfernen: Kontolöschung, Altersgrenze 16+, iOS-Build ohne belohnte App-Installationen (nur Umfragen/Web-Angebote).
+10. Nichts von Apple/Google-Richtlinien Relevantes entfernen: Kontolöschung, Altersgrenze 16+, iOS-Build ohne belohnte App-Installationen (nur Umfragen/Web-Angebote). Umgesetzt serverseitig in `/api/walls`: bei `X-Platform: ios` nur Partner mit `appInstalls: false`; neue Partner brauchen dieses Feld in `PARTNER`.
 
 ## Prüfen nach jeder Änderung
 

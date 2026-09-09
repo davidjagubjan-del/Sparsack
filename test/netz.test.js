@@ -37,7 +37,6 @@ describe("netzTyp", () => {
     const f = vi.fn().mockResolvedValue(antwort(DATACENTER));
     vi.stubGlobal("fetch", f);
     expect(await netzTyp("203.0.113.9")).toEqual({ typ: "rechenzentrum", land: "DE" });
-    await new Promise((r) => setTimeout(r, 20));                // Cache-Schreiben laeuft nebenher
     expect(await netzTyp("203.0.113.9")).toEqual({ typ: "rechenzentrum", land: "DE" });
     expect(f).toHaveBeenCalledTimes(1);
     expect(f.mock.calls[0][0]).toMatch(/^https:\/\/ipqualityscore\.com\/api\/json\/ip\/test-key\/203\.0\.113\.9\?/);

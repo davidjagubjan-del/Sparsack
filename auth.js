@@ -97,7 +97,7 @@ export async function netzTyp(ip) {
     }
   } catch { /* Timeout, Netzfehler, kaputtes JSON → unbekannt */ }
 
-  if (ergebnis.typ !== "unbekannt") db.netzMerken(ip, ergebnis.typ, ergebnis.land).catch(() => {});
+  if (ergebnis.typ !== "unbekannt") await db.netzMerken(ip, ergebnis.typ, ergebnis.land).catch(() => {});
   return ergebnis;
 }
 

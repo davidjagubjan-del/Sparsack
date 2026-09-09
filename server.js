@@ -493,9 +493,17 @@ app.post("/api/aufgabe/start", angemeldet, startBremse, async (req, res) => {
 });
 
 app.get("/api/walls", angemeldet, async (req, res) => {
-  // Signierte Offerwall-Links bauen, damit die User-ID nicht faelschbar ist
-  res.json(await walls.fuerNutzer(req.nutzer.id));
+  // Signierte Offerwall-Links bauen, damit die User-ID nicht faelschbar ist.
+  // iOS bekommt nur Partner ohne belohnte App-Installationen (Apple-Review, siehe FAHRPLAN.md).
+  const alle = await walls.fuerNutzer(req.nutzer.id);
+  res.json(plattformAus(req) === "ios" ? alle.filter((w) => !w.appInstalls) : alle);
 });
+
+/** Plattform aus dem Header der App: "ios" | "android" | "web" — alles andere gilt als web */
+function plattformAus(req) {
+  const p = String(req.headers["x-platform"] || "").toLowerCase();
+  return ["ios", "android", "web"].includes(p) ? p : "web";
+}
 
 /* Freigeschaltete Auszahlungswege fuer die App */
 app.get("/api/auszahlung/wege", angemeldet, (req, res) => {

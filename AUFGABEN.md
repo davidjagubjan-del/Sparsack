@@ -76,7 +76,7 @@ Fertig wenn: eine Auszahlung mit Status `pruefung` per Klick freigegeben werden 
 Vite-Projekt um `CoinCurb.jsx` bauen, Capacitor für iOS + Android, Geräte-Fingerprint (`x-device-id`) und Plattform-Header aus dem nativen Kontext setzen.
 Fertig wenn: Android-Debug-Build auf einem Gerät läuft.
 
-**[ ] 16. iOS-Variante ohne belohnte App-Installationen**
+**[x] 16. iOS-Variante ohne belohnte App-Installationen**
 Feature-Flag: auf iOS nur Umfrage-Partner (BitLabs, CPX) anzeigen, Offerwalls mit App-Install-Angeboten ausblenden. Grund: Apple-Review, siehe FAHRPLAN.md.
 Fertig wenn: derselbe Build je Plattform unterschiedliche Anbieter zeigt.
 

@@ -28,6 +28,19 @@ describe("GET /api/walls", () => {
   it("ohne Login 401", async () => {
     expect((await request(app).get("/api/walls")).status).toBe(401);
   });
+
+  it("Aufgabe 16: derselbe Server zeigt iOS nur Umfrage-Partner, Android und Web alles Konfigurierte", async () => {
+    process.env.ADGATE_WALL_ID = "wall-1";       // Offerwall mit App-Installationen dazu schalten
+    const n = await nutzerAnlegen();
+    const ids = async (plattform) => (await get("/api/walls", n).set("X-Platform", plattform)).body.map((w) => w.id).sort();
+    expect(await ids("android")).toEqual(["adgate", "bitlabs", "cpx"]);
+    expect(await ids("web")).toEqual(["adgate", "bitlabs", "cpx"]);
+    expect(await ids("ios")).toEqual(["bitlabs", "cpx"]);
+    expect(await ids("iOS")).toEqual(["bitlabs", "cpx"]);
+    expect((await get("/api/walls", n)).body.map((w) => w.id).sort()).toEqual(["adgate", "bitlabs", "cpx"]);   // kein Header = web
+    for (const w of (await get("/api/walls", n).set("X-Platform", "ios")).body) expect(w.appInstalls).toBe(false);
+    process.env.ADGATE_WALL_ID = "";
+  });
 });
 
 describe("GET /api/auszahlung/wege", () => {

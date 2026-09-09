@@ -386,8 +386,9 @@ function Verdienen({ melde }) {
         <Abschnitt titel="So funktioniert es">
           <div className="cc-flaeche">
             <p className="cc-flaeche-text">
-              Öffne eine Wand, such dir dort eine Aufgabe aus und erledige sie. Der Anbieter meldet den Abschluss an uns,
-              die Coins erscheinen im Verlauf unter „Auszahlen“.
+              {plattform() === "ios"
+                ? "Auf dem iPhone findest du hier Umfragen und Web-Angebote. Öffne eine Wand, such dir etwas aus und erledige es. Der Anbieter meldet den Abschluss an uns, die Coins erscheinen im Verlauf unter „Auszahlen“."
+                : "Öffne eine Wand, such dir dort eine Aufgabe aus und erledige sie. Der Anbieter meldet den Abschluss an uns, die Coins erscheinen im Verlauf unter „Auszahlen“."}
             </p>
             <p className="cc-klein">
               Neue Coins sind 72 Stunden in der Haltefrist, danach kannst du sie auszahlen. Zieht der Anbieter eine Buchung zurück,

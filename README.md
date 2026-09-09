@@ -167,6 +167,11 @@ Beim Start liest `app/src/main.jsx` Plattform und Geräte-ID über `@capacitor/d
 identifierForVendor) und legt sie in `window.COINCURB_*`; `CoinCurb.jsx` schickt sie als `X-Platform` und `X-Device-Id`,
 Emulatoren zusätzlich als `X-Emulator: 1`. Im Backend muss `CORS_ORIGINS` die Capacitor-Origins enthalten
 (`https://localhost` für Android, `capacitor://localhost` für iOS), sonst blockt der Browser der App die Aufrufe.
+**iOS ohne belohnte App-Installationen:** Apple lehnt Angebote ab, bei denen Nutzer fürs Installieren anderer Apps bezahlt
+werden. Deshalb filtert `/api/walls` anhand des `X-Platform`-Headers: iOS bekommt nur Partner ohne App-Install-Angebote
+(BitLabs, CPX; `appInstalls: false` in `PARTNER`), Android und Web alles Konfigurierte. Derselbe Build zeigt so je
+Plattform andere Anbieter, ohne dass etwas in der App umgeschaltet werden muss.
+
 Vor dem Store: App-Icon und Splash in `app/android` bzw. `app/ios` ersetzen, `appId` in `capacitor.config.json` prüfen.
 
 ## 8. Was noch fehlt
