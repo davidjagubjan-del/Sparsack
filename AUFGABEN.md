@@ -62,7 +62,7 @@ Fertig wenn: Registrierungs-Mail und SMS-Code real ankommen (Test-Modus der Dien
 `appleTokenPruefen()` mit `jose` gegen `https://appleid.apple.com/auth/keys` implementieren, `aud` (Bundle-ID aus `.env`) und `iss` prüfen.
 Fertig wenn: manipuliertes Token abgelehnt, gültiges Sandbox-Token akzeptiert wird.
 
-**[ ] 13. Frontend an die API anbinden**
+**[x] 13. Frontend an die API anbinden**
 In `CoinCurb.jsx` einen fetch-Layer bauen (Login-Screen, Token-Refresh, `API_BASE` aus Config). Demo-Daten nur noch als Fallback, wenn `API_BASE` leer ist. Screens auf `/api/ich`, `/api/security`, `/api/walls`, `/api/auszahlung` umstellen.
 Fertig wenn: kompletter Durchlauf Registrieren → Aufgabe (Test-Postback) → Guthaben sichtbar → Auszahlung angefordert im Browser klappt.
 

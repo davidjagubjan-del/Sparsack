@@ -14,7 +14,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`; `auszahlungZiel()` ist die einzige Stelle, die ein Auszahlungsziel entschlüsselt
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien
-- `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); läuft aktuell mit Demo-Daten
+- `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); `API_BASE` aus `VITE_API_BASE` oder `window.COINCURB_API_BASE`, leer = Demo-Daten. Fetch-Layer `api()` mit Token-Refresh, Login-Screen, Screens auf `/api/ich`, `/api/walls`, `/api/auszahlung`, `/api/auszahlung/wege`, `/api/verlauf`, `/api/security`; Kontolöschung sichtbar im Tab „Konto“
 - Start: `npm install && npm start` — bricht ohne gültige `.env` bewusst ab (siehe `.env.example`)
 - `server.js` exportiert die App (`export default app`) und lauscht nur beim direkten Start; Tests importieren sie
 - Auszahlungswege werden über `AUSZAHLUNG_AKTIV`, Partner-IP-Listen über `<PARTNER>_IPS` in der `.env` geschaltet

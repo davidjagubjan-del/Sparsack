@@ -271,6 +271,15 @@ export const db = {
     };
   },
 
+  /* ---------- Verlauf fuer die App ---------- */
+
+  verlauf: async (nutzerId) => ({
+    buchungen: (await q(`SELECT id, art, titel, partner, coins, status, frei_ab, erstellt FROM buchungen
+                          WHERE nutzer_id=$1 ORDER BY id DESC LIMIT 50`, [nutzerId])).rows,
+    auszahlungen: (await q(`SELECT beleg_nr, methode, betrag_eur, gebuehr_eur, status, erstellt, erledigt FROM auszahlungen
+                             WHERE nutzer_id=$1 ORDER BY erstellt DESC LIMIT 20`, [nutzerId])).rows,
+  }),
+
   /* ---------- Kennzahlen für die Betrugserkennung ---------- */
 
   /** `ziel` = das gerade angefragte Auszahlungsziel, damit Mehrfachkonto- und Sperrlisten-Pruefung es schon sehen */

@@ -66,6 +66,8 @@ const PARTNER = {
     // Kein Hash. Schutz laut Doku: IP-Liste der AdGate-Server + eine URL, die nur AdGate kennt.
     // Wir haengen dafuer einen geheimen token an; {state} = approved | rejected | pending.
     secret: process.env.ADGATE_SECRET,
+    name: "AdGate Media", typ: "Offerwall", appInstalls: true,
+    wall: (u) => process.env.ADGATE_WALL_ID && `https://wall.adgaterewards.com/${process.env.ADGATE_WALL_ID}/${u}`,
     ips: ipListe(process.env.ADGATE_IPS,
       "52.42.57.125,54.186.70.83,52.39.181.185,54.190.14.75,52.11.36.128,54.191.9.88,3.21.111.51,3.135.140.42,3.133.245.65"),
     url: "/postback/adgate?token=<ADGATE_SECRET>&user_id={s1}&transaction_id={conversion_id}&payout={payout}&offer_name={offer_name}&state={state}",
@@ -82,6 +84,8 @@ const PARTNER = {
     // Header X-Ayetstudios-Security-Hash = HMAC-SHA256(API-Key, alphabetisch sortierter Query-String, form-encoded).
     // Gilt fuer ALLE Parameter der URL; {is_chargeback}=1 bei Rueckbuchung, {payout_usd} in USD.
     secret: process.env.AYET_SECRET,           // = Publisher-API-Key aus den Account-Einstellungen
+    name: "AyeT Studios", typ: "Offerwall", appInstalls: true,
+    wall: (u) => process.env.AYET_PLACEMENT && `https://www.ayetstudios.com/offers/web_offerwall/${process.env.AYET_PLACEMENT}?external_identifier=${u}`,
     ips: ipListe(process.env.AYET_IPS),
     url: "/postback/ayet?user_id={external_identifier}&transaction_id={transaction_id}&payout={payout_usd}&offer_name={offer_name}&chargeback={is_chargeback}",
     antwort: "ok",
@@ -96,6 +100,8 @@ const PARTNER = {
     // Der Hash deckt payout NICHT ab — deshalb hier unbedingt TOROX_IPS aus dem Dashboard setzen.
     // Rueckbuchungen kommen als negativer payout mit derselben id.
     secret: process.env.TOROX_SECRET,          // = Secret Key der App
+    name: "Torox", typ: "Offerwall", appInstalls: true,
+    wall: (u) => process.env.TOROX_OFFERWALL_ID && `https://torox.io/ifr/show/${process.env.TOROX_OFFERWALL_ID}/${u}`,
     ips: ipListe(process.env.TOROX_IPS),
     url: "/postback/torox   (Torox haengt seine Parameter selbst an)",
     antwort: "ok",
@@ -108,6 +114,8 @@ const PARTNER = {
     // {hash} = sha256(userID + ip + revenue + currencyReward + Postback-Secret), ohne Trennzeichen.
     // {status}: 1 = Abschluss, 0 = Rueckbuchung. Antwort muss der Body "1" sein.
     secret: process.env.LOOTABLY_SECRET,       // = Postback Secret des Placements
+    name: "Lootably", typ: "Offerwall", appInstalls: true,
+    wall: (u) => process.env.LOOTABLY_PLACEMENT && `https://wall.lootably.com/?placementID=${process.env.LOOTABLY_PLACEMENT}&userID=${u}`,
     ips: ipListe(process.env.LOOTABLY_IPS),
     url: "/postback/lootably?user_id={userID}&transaction_id={transactionID}&ip={ip}&payout={revenue}&reward={currencyReward}&offer_name={offerName}&status={status}&signature={hash}",
     antwort: "1",
@@ -121,6 +129,8 @@ const PARTNER = {
     // [%ACTIVITY:TYPE%] = COMPLETE | SCREENOUT | START_BONUS | RECONCILIATION; bei RECONCILIATION
     // verweist [%REF%] auf die urspruengliche Transaktion (Werte koennen negativ sein).
     secret: process.env.BITLABS_SECRET,        // = App Secret
+    name: "BitLabs", typ: "Umfragen", appInstalls: false,
+    wall: (u) => process.env.BITLABS_TOKEN && `https://web.bitlabs.ai/?token=${process.env.BITLABS_TOKEN}&uid=${u}`,
     ips: ipListe(process.env.BITLABS_IPS, "20.76.54.40/29,18.199.243.90,18.157.62.114,18.193.24.206"),
     url: "/postback/bitlabs?user_id=[%USER:UID%]&transaction_id=[%TX%]&payout=[%VALUE:USD%]&type=[%ACTIVITY:TYPE%]&ref=[%REF%]&offer_name=[%OFFER:NAME%]",
     antwort: "ok",
@@ -134,6 +144,10 @@ const PARTNER = {
     // {secure_hash} = md5({trans_id}-App-Secure-Hash); {status}: 1 = abgeschlossen, 2 = storniert; {amount_usd} in USD.
     // Der Hash deckt user_id und Betrag NICHT ab — CPX_IPS aus dem Dashboard setzen.
     secret: process.env.CPX_SECRET,            // = Secure Hash der App
+    name: "CPX Research", typ: "Umfragen", appInstalls: false,
+    // Der Wall-Link ist signiert: secure_hash = md5(user_id-AppSecureHash) — sonst laesst sich die Nutzer-ID faelschen
+    wall: (u) => process.env.CPX_APP_ID && process.env.CPX_SECRET &&
+      `https://offers.cpx-research.com/index.php?app_id=${process.env.CPX_APP_ID}&ext_user_id=${u}&secure_hash=${md5(`${u}-${process.env.CPX_SECRET}`)}`,
     ips: ipListe(process.env.CPX_IPS),
     url: "/postback/cpx?user_id={user_id}&transaction_id={trans_id}&payout={amount_usd}&status={status}&signature={secure_hash}",
     antwort: "ok",
@@ -474,6 +488,16 @@ app.get("/api/walls", angemeldet, async (req, res) => {
   res.json(await walls.fuerNutzer(req.nutzer.id));
 });
 
+/* Freigeschaltete Auszahlungswege fuer die App */
+app.get("/api/auszahlung/wege", angemeldet, (req, res) => {
+  res.json(Object.entries(PAYOUTS).filter(([, m]) => m.aktiv).map(([id, m]) => ({ id, min: m.min, gebuehr: m.gebuehr })));
+});
+
+/* Verlauf: letzte Buchungen und Auszahlungen des Nutzers */
+app.get("/api/verlauf", angemeldet, async (req, res) => {
+  res.json(await db.verlauf(req.nutzer.id));
+});
+
 /** Leere Liste = alles erlaubt. Sonst muss die IP (v4 oder v6, auch ::ffff:-gemappt) in einem Eintrag liegen. */
 export function ipErlaubt(ip, liste) {
   if (liste.length === 0) return true;
@@ -494,7 +518,13 @@ function nacheinander(schluessel, arbeit) {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ANTEIL_NUTZER = 0.6; // 60 % der Partner-Einnahme geht an den Nutzer
-const walls = { fuerNutzer: async () => [] }; // hier signierte Wall-Links je Anbieter bauen
+/* Angebotswaende fuer einen Nutzer: nur Partner mit eingetragener oeffentlicher ID, Links mit dessen Nutzer-ID */
+const walls = {
+  fuerNutzer: async (nutzerId) =>
+    Object.entries(PARTNER)
+      .map(([id, p]) => ({ id, name: p.name, typ: p.typ, appInstalls: p.appInstalls, url: p.wall(encodeURIComponent(nutzerId)) || null }))
+      .filter((w) => w.url),
+};
 
 /* ============================================================
    7. Fehler — nie Technik-Details nach aussen

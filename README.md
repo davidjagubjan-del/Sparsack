@@ -127,6 +127,22 @@ Telefon-Routen mit 503. Zum Testen reicht der Test-Modus beider Dienste (Resend:
 **Sign in with Apple** prüft das Identity-Token mit `jose` gegen `https://appleid.apple.com/auth/keys`
 (`iss`, `aud` = `APPLE_BUNDLE_ID`, Signatur, Ablauf). Beim Web-Login zusätzlich die Services-ID in `APPLE_BUNDLE_ID` eintragen.
 
-## 5. Was noch fehlt
+## 5. Frontend
+
+`CoinCurb.jsx` ist die komplette App als eine React-Komponente. `VITE_API_BASE` (oder `window.COINCURB_API_BASE`)
+zeigt auf das Backend; bleibt der Wert leer, läuft die App mit Beispieldaten. Lokal so ausprobieren:
+
+```
+npm create vite@latest coincurb-web -- --template react
+cp CoinCurb.jsx coincurb-web/src/   # in main.jsx als App einbinden
+echo "VITE_API_BASE=http://localhost:3000" > coincurb-web/.env
+# Backend mit APP_URL=http://localhost:5173 starten (CORS), dann: cd coincurb-web && npm run dev
+```
+
+Der Link aus der Bestätigungsmail führt auf `APP_URL/bestaetigen?c=…`; die App löst ihn beim Laden ein.
+Geräte-Kennung und Plattform gehen als `X-Device-Id` / `X-Platform` mit (im Browser eine zufällige UUID, in der App aus dem
+nativen Kontext, Aufgabe 15).
+
+## 6. Was noch fehlt
 
 Login und Konten, Datenbank (Postgres), Rechtstexte, App-Store-Freigabe (Apple verlangt bei Reward-Apps genaue Angaben zur Auszahlung), Support-Postfach. Die Coin-Umrechnung steht auf 60 % der Partner-Einnahme für den Nutzer — das ist der marktübliche Bereich.

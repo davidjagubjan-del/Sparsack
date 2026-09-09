@@ -44,3 +44,6 @@ process.env.TWILIO_SID = "ACtest";
 process.env.TWILIO_TOKEN = "twilio-token";
 process.env.TWILIO_VERIFY_SID = "VAtest";
 process.env.APPLE_BUNDLE_ID = "app.coincurb.ios,app.coincurb.web";
+process.env.CPX_APP_ID = "4242";
+process.env.BITLABS_TOKEN = "bl-token";
+process.env.ADGATE_WALL_ID = "";
