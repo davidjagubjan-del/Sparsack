@@ -13,6 +13,8 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); läuft aktuell mit Demo-Daten
 - Start: `npm install && npm start` — bricht ohne gültige `.env` bewusst ab (siehe `.env.example`)
+- `server.js` exportiert die App (`export default app`) und lauscht nur beim direkten Start; Tests importieren sie
+- Auszahlungswege werden über `AUSZAHLUNG_AKTIV`, Partner-IP-Listen über `<PARTNER>_IPS` in der `.env` geschaltet
 
 ## Unumstößliche Regeln
 
@@ -31,5 +33,8 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 
 ```
 node --check server.js auth.js db.js
-npm test        # sobald Aufgabe 14 (Tests) erledigt ist
+npm test        # vitest + supertest gegen TEST_DATABASE_URL (Name muss auf _test enden, wird jedes Mal neu aufgebaut)
 ```
+
+Tests liegen in `test/`; Hilfen zum Anlegen von Nutzern, Guthaben und signierten Postbacks in `test/hilfen.js`.
+Neue Routen und Regeln bekommen dort einen Test, bevor die Aufgabe abgehakt wird.

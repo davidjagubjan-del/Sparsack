@@ -12,15 +12,15 @@ Nach jeder Aufgabe: Haken setzen, committen.
 `.env` aus `.env.example` befüllen, `npm install`, Schema in eine lokale Postgres einspielen, `npm start`.
 Fertig wenn: `GET /api/ich` ohne Token `401` liefert und Registrierung → Login per curl durchläuft.
 
-**[ ] 2. helmet + CORS**
+**[x] 2. helmet + CORS**
 `helmet` einbauen, CORS nur für `APP_URL` erlauben, `express.json({ limit: "50kb" })`.
 Fertig wenn: Anfrage von fremder Origin blockiert wird, Security-Header in der Antwort stehen.
 
-**[ ] 3. IP-Allowlist echt machen**
+**[x] 3. IP-Allowlist echt machen**
 `imNetz()` in server.js ist eine Attrappe (gibt immer true). Mit `ip-range-check` implementieren, IPv6-fähig.
 Fertig wenn: Postback von nicht gelisteter IP bei gesetzter Allowlist `403` bekommt; leere Liste weiter alles erlaubt.
 
-**[ ] 4. Tests aufsetzen (vitest + supertest)**
+**[x] 4. Tests aufsetzen (vitest + supertest)**
 Mindestens: Postback gültig/ungültige Signatur/Duplikat, Auszahlung ohne Login → 401, Doppelanfrage → eine wird 409, Storno bucht zurück, Tageslimit greift.
 Fertig wenn: `npm test` grün läuft. (Früh machen — alle weiteren Aufgaben bauen darauf.)
 

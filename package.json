@@ -2,16 +2,27 @@
   "name": "coincurb",
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "argon2": "^0.41.1",
+    "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "express-async-errors": "^3.1.1",
     "express-rate-limit": "^7.4.1",
+    "helmet": "^8.3.0",
+    "ip-range-check": "^0.2.1",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2",
+    "vitest": "^5.0.0"
   }
 }

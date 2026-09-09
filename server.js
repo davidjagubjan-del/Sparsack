@@ -7,14 +7,35 @@
  */
 
 import "dotenv/config";      // .env laden, bevor db.js/auth.js die Secrets pruefen
+import "express-async-errors"; // Fehler in async-Routen landen im Fehler-Handler statt die Anfrage haengen zu lassen
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
 import crypto from "crypto";
+import ipRangeCheck from "ip-range-check";
+import { pathToFileURL } from "url";
 import { db } from "./db.js";
 import auth, { angemeldet } from "./auth.js";
 
 const app = express();
 app.set("trust proxy", 1);   // hinter Railway/Render sonst falsche IPs bei Allowlist und Rate-Limit
-app.use(express.json());
+app.disable("x-powered-by");
+app.use(helmet());           // Security-Header (nosniff, frame-deny, HSTS, ...)
+
+/* CORS: Browser-Aufrufe nur von der eigenen Web-App. Anfragen ohne Origin
+   (Partner-Postbacks, native App, curl) haben kein CORS und bleiben erlaubt.
+   Capacitor-Origins kommen mit Aufgabe 15 ueber CORS_ORIGINS dazu. */
+const ORIGINS = [process.env.APP_URL, ...(process.env.CORS_ORIGINS || "").split(",")]
+  .map((o) => (o || "").trim().replace(/\/$/, "")).filter(Boolean);
+class FremdeOrigin extends Error { constructor() { super("fremde Origin"); this.status = 403; } }
+app.use(cors({
+  origin: (origin, cb) => (!origin || ORIGINS.includes(origin)) ? cb(null, true) : cb(new FremdeOrigin()),
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Device-Id", "X-Platform", "X-Emulator", "X-Rooted"],
+  maxAge: 600,
+}));
+
+app.use(express.json({ limit: "50kb" }));
 app.use(auth);               // Login-Routen aus auth.js
 
 /* ============================================================
@@ -24,37 +45,45 @@ app.use(auth);               // Login-Routen aus auth.js
    Secret + erlaubte IPs bekommst du im Dashboard des Anbieters.
    ============================================================ */
 
+/* Allowlists kommen aus der .env (z.B. ADGATE_IPS=204.13.156.0/24,2a01:db8::/32),
+   IPv4 und IPv6, einzelne Adressen oder CIDR. Leer = jede IP erlaubt. */
+const ipListe = (env, standard = "") =>
+  (env ?? standard).split(",").map((x) => x.trim()).filter(Boolean);
+
 const PARTNER = {
-  adgate:   { secret: process.env.ADGATE_SECRET,   ips: ["204.13.156.0/24"], sig: "md5_konkat" },
-  ayet:     { secret: process.env.AYET_SECRET,     ips: [],                  sig: "sha256_hmac" },
-  torox:    { secret: process.env.TOROX_SECRET,    ips: [],                  sig: "md5_konkat" },
-  lootably: { secret: process.env.LOOTABLY_SECRET, ips: [],                  sig: "sha256_hmac" },
-  bitlabs:  { secret: process.env.BITLABS_SECRET,  ips: [],                  sig: "sha256_url" },
-  cpx:      { secret: process.env.CPX_SECRET,      ips: [],                  sig: "md5_konkat" },
+  adgate:   { secret: process.env.ADGATE_SECRET,   ips: ipListe(process.env.ADGATE_IPS, "204.13.156.0/24"), sig: "md5_konkat" },
+  ayet:     { secret: process.env.AYET_SECRET,     ips: ipListe(process.env.AYET_IPS),     sig: "sha256_hmac" },
+  torox:    { secret: process.env.TOROX_SECRET,    ips: ipListe(process.env.TOROX_IPS),    sig: "md5_konkat" },
+  lootably: { secret: process.env.LOOTABLY_SECRET, ips: ipListe(process.env.LOOTABLY_IPS), sig: "sha256_hmac" },
+  bitlabs:  { secret: process.env.BITLABS_SECRET,  ips: ipListe(process.env.BITLABS_IPS),  sig: "sha256_url" },
+  cpx:      { secret: process.env.CPX_SECRET,      ips: ipListe(process.env.CPX_IPS),      sig: "md5_konkat" },
 };
 
 /* ============================================================
    2. AUSZAHLUNGEN
    ============================================================ */
 
+/* Freigeschaltete Auszahlungswege stehen in der .env: AUSZAHLUNG_AKTIV=amazon,paypal */
+const AKTIV = ipListe(process.env.AUSZAHLUNG_AKTIV);
+
 const PAYOUTS = {
   paypal: {
-    aktiv: false, min: 5.0, gebuehr: 0,
+    aktiv: AKTIV.includes("paypal"), min: 5.0, gebuehr: 0,
     zugang: { id: process.env.PAYPAL_CLIENT_ID, secret: process.env.PAYPAL_SECRET },
     senden: async (ziel, betrag) => {/* PayPal Payouts API v1/payments/payouts */},
   },
   amazon: {
-    aktiv: false, min: 5.0, gebuehr: 0,
+    aktiv: AKTIV.includes("amazon"), min: 5.0, gebuehr: 0,
     zugang: { key: process.env.TANGO_KEY, konto: process.env.TANGO_ACCOUNT },
     senden: async (ziel, betrag) => {/* Tango Card / Giftbit orders */},
   },
   bank: {
-    aktiv: false, min: 20.0, gebuehr: 0.35,
+    aktiv: AKTIV.includes("bank"), min: 20.0, gebuehr: 0.35,
     zugang: { key: process.env.WISE_TOKEN },
     senden: async (ziel, betrag) => {/* Wise / Stripe Connect payout */},
   },
   crypto: {
-    aktiv: false, min: 10.0, gebuehr: 0.5,
+    aktiv: AKTIV.includes("crypto"), min: 10.0, gebuehr: 0.5,
     zugang: { key: process.env.COINBASE_KEY },
     senden: async (ziel, betrag) => {/* Coinbase Commerce */},
   },
@@ -179,10 +208,12 @@ app.get("/postback/:partner", async (req, res) => {
   if (!signaturOk(partner, req)) return res.status(403).send("Signatur falsch");
 
   const { user_id, transaction_id, payout, offer_name } = req.query;
+  if (!transaction_id) return res.status(400).send("transaction_id fehlt");
 
   // Doppelte Meldungen abweisen (partner + transaction_id unique in der DB)
   if (await db.transaktionExistiert(partner, transaction_id)) return res.send("ok"); // Partner will 200
-  if (!(await db.nutzer(user_id))) return res.send("ok"); // unbekannte ID: nichts gutschreiben, aber Partner-Wiederholung stoppen
+  // unbekannte oder kaputte ID: nichts gutschreiben, aber Partner-Wiederholung stoppen
+  if (!UUID.test(String(user_id || "")) || !(await db.nutzer(user_id))) return res.send("ok");
 
   // payout kommt vom Partner in Euro; bei USD-Partnern hier zusaetzlich umrechnen
   const coins = Math.round(Number(payout) * 1000 * ANTEIL_NUTZER);
@@ -204,6 +235,9 @@ app.get("/postback/:partner", async (req, res) => {
 
 /* Storno-Postback: Partner zieht eine Buchung zurueck */
 app.get("/postback/:partner/storno", async (req, res) => {
+  const p = PARTNER[req.params.partner];
+  if (!p) return res.status(404).send("unbekannter Partner");
+  if (!ipErlaubt(req.ip, p.ips)) return res.status(403).send("IP nicht erlaubt");
   if (!signaturOk(req.params.partner, req)) return res.status(403).send("Signatur falsch");
   await db.stornieren(req.params.partner, req.query.transaction_id); // Guthaben darf ins Minus gehen
   res.send("ok");
@@ -242,14 +276,18 @@ app.post("/api/auszahlung", angemeldet, async (req, res) => {
 
   // Erst abbuchen, dann Endstand pruefen: laufen zwei Anfragen gleichzeitig,
   // rutscht das Guthaben ins Minus und die spaetere wird zurueckgedreht.
+  // Innerhalb eines Prozesses laufen Anfragen desselben Nutzers dafuer nacheinander,
+  // damit genau eine durchkommt; ueber mehrere Instanzen hinweg schuetzt die Endstand-Pruefung.
   const coins = Math.round(betrag * 1000);
-  await db.gutschreiben({ nutzerId: userId, art: "auszahlung", coins: -coins,
-    titel: `Auszahlung ${methode}`, status: "frei", halteStunden: 0 });
-  if ((await db.freiesGuthabenEur(userId)) < 0) {
+  const gedeckt = await nacheinander(userId, async () => {
+    await db.gutschreiben({ nutzerId: userId, art: "auszahlung", coins: -coins,
+      titel: `Auszahlung ${methode}`, status: "frei", halteStunden: 0 });
+    if ((await db.freiesGuthabenEur(userId)) >= 0) return true;
     await db.gutschreiben({ nutzerId: userId, art: "korrektur", coins,
       titel: "Auszahlung abgebrochen (Doppelanfrage)", status: "frei", halteStunden: 0 });
-    return res.status(409).json({ fehler: "Bitte versuch es gleich noch einmal." });
-  }
+    return false;
+  });
+  if (!gedeckt) return res.status(409).json({ fehler: "Bitte versuch es gleich noch einmal." });
 
   const risiko = risikoPruefen(await db.kennzahlenFuer(userId));
   const auftrag = await db.auszahlungAnlegen({
@@ -287,11 +325,45 @@ app.get("/api/walls", angemeldet, async (req, res) => {
   res.json(await walls.fuerNutzer(req.nutzer.id));
 });
 
-function ipErlaubt(ip, liste) { return liste.length === 0 ? true : liste.some((n) => imNetz(ip, n)); }
-function imNetz(ip, cidr) { /* CIDR-Pruefung, z.B. mit ip-range-check */ return true; }
+/** Leere Liste = alles erlaubt. Sonst muss die IP (v4 oder v6, auch ::ffff:-gemappt) in einem Eintrag liegen. */
+export function ipErlaubt(ip, liste) {
+  if (liste.length === 0) return true;
+  if (!ip) return false;
+  return liste.some((n) => imNetz(ip, n));
+}
+function imNetz(ip, cidr) { try { return ipRangeCheck(ip, cidr); } catch { return false; } }
 
+/** Reiht Arbeit pro Schluessel hintereinander (in diesem Prozess). */
+const warteschlangen = new Map();
+function nacheinander(schluessel, arbeit) {
+  const vorher = warteschlangen.get(schluessel) || Promise.resolve();
+  const jetzt = vorher.catch(() => {}).then(arbeit);
+  warteschlangen.set(schluessel, jetzt);
+  jetzt.finally(() => { if (warteschlangen.get(schluessel) === jetzt) warteschlangen.delete(schluessel); });
+  return jetzt;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ANTEIL_NUTZER = 0.6; // 60 % der Partner-Einnahme geht an den Nutzer
 const walls = { fuerNutzer: async () => [] }; // hier signierte Wall-Links je Anbieter bauen
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CoinCurb läuft auf Port ${PORT}`));
+/* ============================================================
+   7. Fehler — nie Technik-Details nach aussen
+   ============================================================ */
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err instanceof FremdeOrigin)      return res.status(403).json({ fehler: "Dieser Aufruf ist von hier aus nicht erlaubt." });
+  if (err.type === "entity.too.large")  return res.status(413).json({ fehler: "Die Anfrage ist zu gross." });
+  if (err.type === "entity.parse.failed") return res.status(400).json({ fehler: "Die Anfrage konnte nicht gelesen werden." });
+  console.error(err);                   // intern vollstaendig, nach aussen nur eine allgemeine Meldung
+  res.status(err.status || 500).json({ fehler: "Da ist etwas schiefgelaufen. Bitte versuch es spaeter noch einmal." });
+});
+
+export default app;
+
+/* Nur starten, wenn die Datei direkt aufgerufen wird (Tests importieren nur die App) */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`CoinCurb läuft auf Port ${PORT}`));
+}

@@ -217,10 +217,13 @@ export const db = {
     q(`INSERT INTO protokoll (nutzer_id, aktion, details, wer) VALUES ($1,$2,$3,$4)`,
       [nutzerId, aktion, details, wer]),
 
+  /** Verbindungen schliessen (Tests, sauberes Herunterfahren) */
+  schliessen: () => pool.end(),
+
   codeFuer: (id) => id.slice(0, 6).toUpperCase(),
   nutzerZuCode: async (code) =>
     (await eine(`SELECT id FROM nutzer WHERE upper(left(id::text,6))=upper($1)`, [code]))?.id || null,
 };
 
 /* Haltefrist jede Minute auflösen */
-setInterval(() => db.haltefristAufloesen().catch(() => {}), 60000);
+setInterval(() => db.haltefristAufloesen().catch(() => {}), 60000).unref();

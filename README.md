@@ -22,6 +22,9 @@ curl localhost:3000/api/ich -H "authorization: Bearer <zugang>"  # -> Name, Coin
 
 Die Extensions `pgcrypto` und `citext` legt `schema.sql` selbst an; dafuer braucht der DB-Nutzer beim ersten Einspielen Superuser-Rechte, oder du legst sie vorher einmal als `postgres` an.
 
+Tests: zweite Datenbank anlegen (`createdb coincurb_test`), `TEST_DATABASE_URL` in die `.env`, dann `npm test`.
+Die Test-Datenbank wird bei jedem Lauf geleert und aus `schema.sql` neu aufgebaut.
+
 ## 1. Partner eintragen
 
 Oben in `CoinCurb.jsx` bei `PARTNER` die **Publisher-ID** einsetzen (öffentlich, darf im Frontend stehen). Das **Secret** kommt in die `.env` des Backends.
