@@ -1,0 +1,226 @@
+/**
+ * CoinCurb — Datenbankschicht (PostgreSQL)
+ * npm i pg
+ * Hier stecken alle Funktionen, die server.js und auth.js aufrufen.
+ */
+
+import pg from "pg";
+import crypto from "crypto";
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
+const q = (sql, p = []) => pool.query(sql, p);
+const eine = async (sql, p) => (await q(sql, p)).rows[0] || null;
+
+/** Alles, was identifiziert, wird gehasht gespeichert — nie im Klartext. */
+if (!process.env.HASH_PEPPER || process.env.HASH_PEPPER.length < 32)
+  throw new Error("HASH_PEPPER fehlt oder ist zu kurz (mindestens 32 Zeichen).");
+export const hash = (wert) =>
+  crypto.createHmac("sha256", process.env.HASH_PEPPER).update(String(wert)).digest("hex");
+
+const HALTEFRIST_STD = 72;
+
+export const db = {
+  /* ---------- Konten ---------- */
+
+  nutzer: (id) => eine(`SELECT * FROM nutzer WHERE id=$1`, [id]),
+  nutzerNachEmail: (email) => eine(`SELECT * FROM nutzer WHERE email=$1`, [email]),
+  emailVergeben: async (email) => !!(await eine(`SELECT 1 FROM nutzer WHERE email=$1`, [email.toLowerCase()])),
+  aktivGesehen: (id) => q(`UPDATE nutzer SET zuletzt_aktiv=now() WHERE id=$1`, [id]),
+
+  nutzerAnlegen: ({ email, passwortHash, anzeigename, geworbenVon }) =>
+    eine(`INSERT INTO nutzer (email, passwort_hash, anzeigename, geworben_von)
+          VALUES ($1,$2,$3,$4) RETURNING *`, [email, passwortHash, anzeigename, geworbenVon]),
+
+  nutzerNachApple: async (sub, email) =>
+    (await eine(`SELECT * FROM nutzer WHERE apple_sub=$1`, [sub])) ||
+    (await eine(`INSERT INTO nutzer (apple_sub, email, anzeigename, email_bestaetigt)
+                 VALUES ($1,$2,$3,TRUE) RETURNING *`, [sub, email, (email || "Spieler").split("@")[0]])),
+
+  nutzerSperren: async (id, grund) => {
+    await q(`UPDATE nutzer SET gesperrt=TRUE, sperrgrund=$2 WHERE id=$1`, [id, grund]);
+    await db.protokoll(id, "sperre", { grund });
+  },
+  nutzerEntsperren: async (id, wer) => {
+    await q(`UPDATE nutzer SET gesperrt=FALSE, sperrgrund=NULL WHERE id=$1`, [id]);
+    await db.protokoll(id, "entsperrt", { wer });
+  },
+
+  emailBestaetigt: (id) => q(`UPDATE nutzer SET email_bestaetigt=TRUE WHERE id=$1`, [id]),
+  telefonBestaetigt: (id, nr) =>
+    q(`UPDATE nutzer SET telefon=$2, telefon_bestaetigt=TRUE WHERE id=$1`, [id, hash(nr)]),
+  telefonVergeben: async (nr, ausser) =>
+    !!(await eine(`SELECT 1 FROM nutzer WHERE telefon=$1 AND id<>$2`, [hash(nr), ausser])),
+
+  kontoLoeschen: (id) =>
+    q(`UPDATE nutzer SET geloescht_am=now(), email=id||'@geloescht.invalid', passwort_hash=NULL,
+              telefon=NULL, anzeigename='Gelöscht', apple_sub=NULL, google_sub=NULL WHERE id=$1`, [id]),
+
+  /* ---------- Sitzungen & Codes ---------- */
+
+  sitzungAnlegen: ({ nutzerId, geraetId, ipHash, refreshHash, laeuftAb }) =>
+    eine(`INSERT INTO sitzungen (nutzer_id, geraet_id, ip_hash, refresh_hash, laeuft_ab)
+          VALUES ($1,$2,$3,$4,$5) RETURNING id`, [nutzerId, geraetId, ipHash, refreshHash, laeuftAb]),
+  sitzungNachHash: (h) => eine(`SELECT * FROM sitzungen WHERE refresh_hash=$1`, [h]),
+  sitzungWiderrufen: (id) => q(`UPDATE sitzungen SET widerrufen=TRUE WHERE id=$1`, [id]),
+  sitzungenWiderrufen: (nutzerId) => q(`UPDATE sitzungen SET widerrufen=TRUE WHERE nutzer_id=$1`, [nutzerId]),
+
+  codeAnlegen: ({ nutzerId, zweck, codeHash, minuten }) =>
+    q(`INSERT INTO codes (nutzer_id, zweck, code_hash, laeuft_ab)
+       VALUES ($1,$2,$3, now() + ($4 || ' minutes')::interval)`, [nutzerId, zweck, codeHash, minuten]),
+
+  codeEinloesen: async ({ zweck, codeHash, nutzerId = null, maxVersuche = 10 }) => {
+    const c = await eine(
+      `SELECT * FROM codes WHERE zweck=$1 AND code_hash=$2 AND eingeloest IS NULL
+         AND laeuft_ab > now() AND versuche < $3 AND ($4::uuid IS NULL OR nutzer_id=$4)`,
+      [zweck, codeHash, maxVersuche, nutzerId]);
+    if (!c) return null;
+    await q(`UPDATE codes SET eingeloest=now() WHERE id=$1`, [c.id]);
+    return c;
+  },
+
+  /* ---------- Geräte ---------- */
+
+  geraetMerken: ({ fingerprint, plattform, emulator, rootJailbreak }) =>
+    eine(`INSERT INTO geraete (fingerprint, plattform, emulator, root_jailbreak)
+          VALUES ($1,$2,$3,$4)
+          ON CONFLICT (fingerprint) DO UPDATE SET zuletzt=now()
+          RETURNING *`, [fingerprint, plattform, emulator, rootJailbreak]),
+
+  geraetVerknuepfen: ({ nutzerId, geraetId, ipHash, ipTyp, ipLand }) =>
+    q(`INSERT INTO nutzer_geraet (nutzer_id, geraet_id, ip_hash, ip_typ, ip_land)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (nutzer_id, geraet_id) DO UPDATE SET zuletzt=now(), ip_hash=$3, ip_typ=$4`,
+      [nutzerId, geraetId, ipHash, ipTyp, ipLand]),
+
+  aufSperrliste: async (typ, wert) =>
+    !!(await eine(`SELECT 1 FROM sperrliste WHERE typ=$1 AND wert=$2`, [typ, hash(wert)])),
+  aufSperrlisteSetzen: (typ, wert, grund) =>
+    q(`INSERT INTO sperrliste (typ, wert, grund) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+      [typ, hash(wert), grund]),
+
+  /* ---------- Geld ---------- */
+
+  transaktionExistiert: async (partner, tx) =>
+    !!(await eine(`SELECT 1 FROM buchungen WHERE partner=$1 AND partner_tx=$2`, [partner, tx])),
+
+  gutschreiben: ({ nutzerId, art, coins, titel, partner = null, partnerTx = null,
+                   status = "haltefrist", halteStunden = HALTEFRIST_STD, risikoPunkte = null }) =>
+    eine(`INSERT INTO buchungen (nutzer_id, art, coins, titel, partner, partner_tx, status, frei_ab, risiko_punkte)
+          VALUES ($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' hours')::interval, $9)
+          ON CONFLICT DO NOTHING RETURNING *`,
+      [nutzerId, art, coins, titel, partner, partnerTx, status, halteStunden, risikoPunkte]),
+
+  stornieren: async (partner, tx) => {
+    const b = await eine(`SELECT * FROM buchungen WHERE partner=$1 AND partner_tx=$2`, [partner, tx]);
+    if (!b) return null;
+    await q(`UPDATE buchungen SET status='storniert' WHERE id=$1`, [b.id]);
+    // Ist das Geld schon frei, wird gegengebucht — das Guthaben darf ins Minus
+    if (b.status === "frei")
+      await db.gutschreiben({ nutzerId: b.nutzer_id, art: "storno", coins: -b.coins,
+        titel: "Rückbuchung: " + b.titel, status: "frei", halteStunden: 0 });
+    return b;
+  },
+
+  haltefristAufloesen: () =>
+    q(`UPDATE buchungen SET status='frei' WHERE status='haltefrist' AND frei_ab < now()`),
+
+  guthaben: async (nutzerId) =>
+    (await eine(`SELECT * FROM guthaben WHERE nutzer_id=$1`, [nutzerId])) || { coins_gesamt: 0, coins_frei: 0 },
+
+  freiesGuthabenEur: async (nutzerId) => {
+    const g = await db.guthaben(nutzerId);
+    return Number(g.coins_frei || 0) / 1000;
+  },
+
+  auszahlungAnlegen: ({ nutzerId, methode, ziel, betrag, gebuehr, status, risiko }) =>
+    eine(`INSERT INTO auszahlungen (beleg_nr, nutzer_id, methode, ziel, ziel_hash, betrag_eur, gebuehr_eur, status, risiko_punkte)
+          VALUES ('AZ-'||lpad((random()*899999+100000)::int::text,6,'0'),$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [nutzerId, methode, ziel, hash(ziel), betrag, gebuehr, status, risiko.punkte]),
+
+  ausgezahltImMonat: async (nutzerId) => {
+    const r = await eine(
+      `SELECT COALESCE(SUM(betrag_eur),0) s FROM auszahlungen
+        WHERE nutzer_id=$1 AND status IN ('laeuft','ausgezahlt') AND erstellt > date_trunc('month', now())`,
+      [nutzerId]);
+    return Number(r.s);
+  },
+
+  ausgezahltHeute: async (nutzerId) => {
+    const r = await eine(
+      `SELECT COALESCE(SUM(betrag_eur),0) s FROM auszahlungen
+        WHERE nutzer_id=$1 AND status IN ('laeuft','ausgezahlt','pruefung') AND erstellt > date_trunc('day', now())`,
+      [nutzerId]);
+    return Number(r.s);   // 'pruefung' zaehlt mit, sonst umgeht man das Tageslimit ueber viele Anfragen
+  },
+
+  /* ---------- Kennzahlen für die Betrugserkennung ---------- */
+
+  kennzahlenFuer: async (nutzerId) => {
+    const k = await eine(`
+      WITH g AS (SELECT geraet_id, ip_hash FROM nutzer_geraet WHERE nutzer_id=$1)
+      SELECT
+        (SELECT COUNT(DISTINCT nutzer_id) FROM nutzer_geraet
+          WHERE geraet_id IN (SELECT geraet_id FROM g))                         AS konten_auf_geraet,
+        (SELECT COUNT(DISTINCT nutzer_id) FROM nutzer_geraet
+          WHERE ip_hash IN (SELECT ip_hash FROM g))                             AS konten_auf_ip,
+        (SELECT bool_or(emulator OR root_jailbreak) FROM geraete
+          WHERE id IN (SELECT geraet_id FROM g))                                AS emulator,
+        (SELECT bool_or(gesperrt) FROM geraete WHERE id IN (SELECT geraet_id FROM g)) AS geraet_gesperrt,
+        (SELECT max(ip_typ) FROM nutzer_geraet WHERE nutzer_id=$1)              AS ip_typ,
+        (SELECT EXTRACT(day FROM now()-min(erstmals)) FROM geraete
+          WHERE id IN (SELECT geraet_id FROM g))                                AS geraet_alter_tage,
+        (SELECT EXTRACT(day FROM now()-erstellt) FROM nutzer WHERE id=$1)       AS konto_alter_tage,
+        (SELECT COUNT(*) FROM buchungen WHERE nutzer_id=$1 AND art='aufgabe')   AS abschluesse,
+        (SELECT COALESCE(SUM(coins),0)/1000.0 FROM buchungen
+          WHERE nutzer_id=$1 AND coins>0)                                       AS verdient_eur,
+        (SELECT COUNT(*)::float / GREATEST(COUNT(*) FILTER (WHERE status<>'storniert'),1)
+           FROM buchungen WHERE nutzer_id=$1 AND status='storniert')            AS storno_quote,
+        (SELECT COUNT(DISTINCT a2.nutzer_id) FROM auszahlungen a1
+           JOIN auszahlungen a2 ON a1.ziel_hash=a2.ziel_hash
+          WHERE a1.nutzer_id=$1)                                                AS konten_gleiche_adresse,
+        (SELECT COUNT(*) FROM nutzer WHERE geworben_von=$1)                     AS refs,
+        (SELECT COUNT(*) FROM nutzer w JOIN nutzer_geraet ng ON ng.nutzer_id=w.id
+          WHERE w.geworben_von=$1 AND ng.geraet_id IN (SELECT geraet_id FROM g))AS refs_gleiches_geraet
+      `, [nutzerId]);
+
+    return {
+      kontenAufGeraet: Number(k.konten_auf_geraet || 1),
+      kontenAufIp: Number(k.konten_auf_ip || 1),
+      emulator: !!k.emulator,
+      geraetAufSperrliste: !!k.geraet_gesperrt,
+      ipTyp: k.ip_typ || "unbekannt",
+      geraetAlterTage: Number(k.geraet_alter_tage || 0),
+      kontoAlterTage: Number(k.konto_alter_tage || 0),
+      abschluesse: Number(k.abschluesse || 0),
+      verdientEur: Number(k.verdient_eur || 0),
+      stornoQuote: Number(k.storno_quote || 0),
+      kontenMitGleicherAuszahladresse: Number(k.konten_gleiche_adresse || 1),
+      refs: Number(k.refs || 0),
+      refsGleichesGeraet: Number(k.refs_gleiches_geraet || 0),
+      refsAktiv: 0,          // aus buchungen der Geworbenen nachziehen
+      medianDauerSek: 999,   // Aufgabenstart mitloggen, dann hier auswerten
+      erwarteteDauerSek: 999,
+      gleicheAbstaende: false,
+      stundenAmStueck: 0,
+      anteilHighPayout: 0,
+      auszahladresseGeaendertVorStd: 999,
+      simLand: null, ipLand: null, alterAngabe: 99, ausweisSchonBenutzt: false,
+      auszahladresseAufSperrliste: false,
+    };
+  },
+
+  risikoMerken: ({ nutzerId, punkte, stufe, treffer, anlass }) =>
+    q(`INSERT INTO risiko_verlauf (nutzer_id, punkte, stufe, treffer, anlass) VALUES ($1,$2,$3,$4,$5)`,
+      [nutzerId, punkte, stufe, treffer, anlass]),
+
+  protokoll: (nutzerId, aktion, details, wer = "system") =>
+    q(`INSERT INTO protokoll (nutzer_id, aktion, details, wer) VALUES ($1,$2,$3,$4)`,
+      [nutzerId, aktion, details, wer]),
+
+  codeFuer: (id) => id.slice(0, 6).toUpperCase(),
+  nutzerZuCode: async (code) =>
+    (await eine(`SELECT id FROM nutzer WHERE upper(left(id::text,6))=upper($1)`, [code]))?.id || null,
+};
+
+/* Haltefrist jede Minute auflösen */
+setInterval(() => db.haltefristAufloesen().catch(() => {}), 60000);

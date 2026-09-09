@@ -1,0 +1,236 @@
+/**
+ * CoinCurb — Login
+ * Einbinden in server.js:  import auth from "./auth.js"; app.use(auth);
+ *
+ * npm i express argon2 jsonwebtoken pg zod express-rate-limit
+ */
+
+import express from "express";
+import argon2 from "argon2";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import rateLimit from "express-rate-limit";
+import { db, hash } from "./db.js";
+
+const auth = express.Router();
+const GEHEIM = process.env.JWT_SECRET;              // in .env, mind. 32 Zeichen
+if (!GEHEIM || GEHEIM.length < 32)
+  throw new Error("JWT_SECRET fehlt oder ist zu kurz (mindestens 32 Zeichen).");
+const ZUGANG_MIN = 15;                              // Access-Token 15 Minuten
+const REFRESH_TAGE = 60;
+
+const bremse = (anzahl, minuten) =>
+  rateLimit({ windowMs: minuten * 60000, limit: anzahl, standardHeaders: true });
+
+/* ---------- Hilfen ---------- */
+
+function tokenBauen(nutzerId) {
+  return jwt.sign({ sub: nutzerId }, GEHEIM, { expiresIn: ZUGANG_MIN + "m" });
+}
+
+async function refreshBauen(nutzerId, geraetId, ip) {
+  const roh = crypto.randomBytes(48).toString("base64url");
+  await db.sitzungAnlegen({
+    nutzerId, geraetId, ipHash: hash(ip), refreshHash: hash(roh),
+    laeuftAb: new Date(Date.now() + REFRESH_TAGE * 864e5),
+  });
+  return roh;
+}
+
+/** Vor jeder geschützten Route */
+export async function angemeldet(req, res, next) {
+  const kopf = req.headers.authorization || "";
+  try {
+    const { sub } = jwt.verify(kopf.replace("Bearer ", ""), GEHEIM);
+    const n = await db.nutzer(sub);
+    if (!n || n.geloescht_am) return res.status(401).json({ fehler: "Bitte melde dich neu an." });
+    if (n.gesperrt) return res.status(403).json({ fehler: "Dieses Konto ist gesperrt.", grund: n.sperrgrund });
+    req.nutzer = n;
+    next();
+  } catch {
+    res.status(401).json({ fehler: "Bitte melde dich neu an." });
+  }
+}
+
+/** Gerät bei jedem Aufruf mitschreiben — Basis der Betrugserkennung */
+async function geraetErfassen(req, nutzerId) {
+  const fp = req.headers["x-device-id"];           // FingerprintJS o.ä. aus der App
+  if (!fp) return null;
+  const g = await db.geraetMerken({
+    fingerprint: fp,
+    plattform: req.headers["x-platform"],
+    emulator: req.headers["x-emulator"] === "1",
+    rootJailbreak: req.headers["x-rooted"] === "1",
+  });
+  await db.geraetVerknuepfen({
+    nutzerId, geraetId: g.id, ipHash: hash(req.ip),
+    ipTyp: await netzTyp(req.ip), ipLand: req.headers["cf-ipcountry"],
+  });
+  return g;
+}
+
+async function netzTyp(ip) {
+  // Hier IPQualityScore / ipdata anbinden. Ohne Anbieter: 'unbekannt'.
+  return "unbekannt";
+}
+
+/* ---------- Registrieren ---------- */
+
+auth.post("/api/registrieren", bremse(5, 60), async (req, res) => {
+  const { email, passwort, anzeigename, werbecode } = req.body;
+
+  if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email || ""))
+    return res.status(400).json({ fehler: "Diese E-Mail-Adresse stimmt nicht." });
+  if ((passwort || "").length < 10)
+    return res.status(400).json({ fehler: "Das Passwort braucht mindestens 10 Zeichen." });
+  if (await db.emailVergeben(email))
+    return res.status(409).json({ fehler: "Für diese E-Mail gibt es schon ein Konto." });
+  if (await db.aufSperrliste("email", email.toLowerCase()))
+    return res.status(403).json({ fehler: "Mit dieser Adresse ist keine Anmeldung möglich." });
+
+  const nutzer = await db.nutzerAnlegen({
+    email: email.toLowerCase(),
+    passwortHash: await argon2.hash(passwort, { type: argon2.argon2id }),
+    anzeigename: (anzeigename || email.split("@")[0]).slice(0, 24),
+    geworbenVon: werbecode ? await db.nutzerZuCode(werbecode) : null,
+  });
+
+  const geraet = await geraetErfassen(req, nutzer.id);
+  if (geraet?.gesperrt) {
+    await db.nutzerSperren(nutzer.id, "Gerät ist gesperrt");
+    return res.status(403).json({ fehler: "Auf diesem Gerät ist keine Anmeldung möglich." });
+  }
+
+  await mailCodeSenden(nutzer);
+  res.json({
+    zugang: tokenBauen(nutzer.id),
+    refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip),
+    naechsterSchritt: "email_bestaetigen",
+  });
+});
+
+/* ---------- Anmelden ---------- */
+
+auth.post("/api/anmelden", bremse(10, 15), async (req, res) => {
+  const { email, passwort } = req.body;
+  const nutzer = await db.nutzerNachEmail((email || "").toLowerCase());
+
+  // Gleiche Antwort und gleiche Laufzeit, egal ob es das Konto gibt
+  const ok = nutzer?.passwort_hash ? await argon2.verify(nutzer.passwort_hash, passwort || "") : false;
+  if (!ok) return res.status(401).json({ fehler: "E-Mail oder Passwort stimmt nicht." });
+  if (nutzer.gesperrt) return res.status(403).json({ fehler: "Dieses Konto ist gesperrt.", grund: nutzer.sperrgrund });
+  if (nutzer.geloescht_am) return res.status(401).json({ fehler: "E-Mail oder Passwort stimmt nicht." });
+
+  const geraet = await geraetErfassen(req, nutzer.id);
+  await db.aktivGesehen(nutzer.id);
+
+  res.json({
+    zugang: tokenBauen(nutzer.id),
+    refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip),
+    naechsterSchritt: !nutzer.email_bestaetigt ? "email_bestaetigen"
+      : !nutzer.telefon_bestaetigt ? "telefon_bestaetigen" : null,
+  });
+});
+
+/* Apple-Login ist im App Store Pflicht, sobald es andere Fremd-Logins gibt */
+auth.post("/api/anmelden/apple", bremse(20, 15), async (req, res) => {
+  const sub = await appleTokenPruefen(req.body.identityToken);   // Apple-Public-Keys prüfen
+  if (!sub) return res.status(401).json({ fehler: "Die Anmeldung bei Apple hat nicht geklappt." });
+  const nutzer = await db.nutzerNachApple(sub, req.body.email);
+  const geraet = await geraetErfassen(req, nutzer.id);
+  res.json({ zugang: tokenBauen(nutzer.id), refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip) });
+});
+
+async function appleTokenPruefen(token) { /* jose + https://appleid.apple.com/auth/keys */ return null; }
+
+/* ---------- Token erneuern / abmelden ---------- */
+
+auth.post("/api/token", bremse(60, 15), async (req, res) => {
+  const s = await db.sitzungNachHash(hash(req.body.refresh || ""));
+  if (!s) return res.status(401).json({ fehler: "Bitte melde dich neu an." });
+  if (s.widerrufen) {
+    // Ein bereits ausgetauschtes Token taucht wieder auf — sehr wahrscheinlich gestohlen.
+    await db.sitzungenWiderrufen(s.nutzer_id);
+    await db.protokoll(s.nutzer_id, "refresh_wiederverwendet", { sitzung: s.id });
+    return res.status(401).json({ fehler: "Bitte melde dich neu an." });
+  }
+  if (new Date(s.laeuft_ab) < new Date())
+    return res.status(401).json({ fehler: "Bitte melde dich neu an." });
+  await db.sitzungWiderrufen(s.id);                       // Rotation: altes Token verfällt sofort
+  res.json({ zugang: tokenBauen(s.nutzer_id), refresh: await refreshBauen(s.nutzer_id, s.geraet_id, req.ip) });
+});
+
+auth.post("/api/abmelden", angemeldet, async (req, res) => {
+  await db.sitzungenWiderrufen(req.nutzer.id);
+  res.json({ ok: true });
+});
+
+/* ---------- E-Mail bestätigen ---------- */
+
+async function mailCodeSenden(nutzer) {
+  const code = crypto.randomBytes(24).toString("base64url");
+  await db.codeAnlegen({ nutzerId: nutzer.id, zweck: "email", codeHash: hash(code), minuten: 60 });
+  await mail.senden(nutzer.email, "Bestätige deine E-Mail",
+    `Tippe hier, um dein Konto freizuschalten: ${process.env.APP_URL}/bestaetigen?c=${code}`);
+}
+
+auth.get("/api/email/bestaetigen", bremse(20, 60), async (req, res) => {
+  const treffer = await db.codeEinloesen({ zweck: "email", codeHash: hash(req.query.c || "") });
+  if (!treffer) return res.status(400).json({ fehler: "Dieser Link ist abgelaufen. Fordere einen neuen an." });
+  await db.emailBestaetigt(treffer.nutzer_id);
+  await db.gutschreiben({ nutzerId: treffer.nutzer_id, art: "bonus", coins: 500, titel: "Willkommensbonus" });
+  res.json({ ok: true });
+});
+
+/* ---------- Telefon bestätigen (vor der ersten Auszahlung) ---------- */
+
+auth.post("/api/telefon/code", angemeldet, bremse(5, 60), async (req, res) => {
+  const nummer = String(req.body.telefon || "").replace(/[^\d+]/g, "");
+  if (await db.telefonVergeben(nummer, req.nutzer.id))
+    return res.status(409).json({ fehler: "Diese Nummer gehört bereits zu einem anderen Konto." });
+
+  const code = String(Math.floor(100000 + Math.random() * 899999));
+  await db.codeAnlegen({ nutzerId: req.nutzer.id, zweck: "telefon", codeHash: hash(code + nummer), minuten: 10 });
+  await sms.senden(nummer, `Dein CoinCurb-Code: ${code}`);
+  res.json({ ok: true });
+});
+
+auth.post("/api/telefon/pruefen", angemeldet, bremse(10, 60), async (req, res) => {
+  const nummer = String(req.body.telefon || "").replace(/[^\d+]/g, "");
+  const treffer = await db.codeEinloesen({
+    zweck: "telefon", nutzerId: req.nutzer.id, codeHash: hash(String(req.body.code) + nummer), maxVersuche: 5,
+  });
+  if (!treffer) return res.status(400).json({ fehler: "Der Code stimmt nicht oder ist abgelaufen." });
+  await db.telefonBestaetigt(req.nutzer.id, nummer);
+  res.json({ ok: true });
+});
+
+/* ---------- Ich ---------- */
+
+auth.get("/api/ich", angemeldet, async (req, res) => {
+  const g = await db.guthaben(req.nutzer.id);
+  res.json({
+    name: req.nutzer.anzeigename,
+    coins: g.coins_gesamt || 0,
+    coinsFrei: g.coins_frei || 0,
+    werbecode: db.codeFuer(req.nutzer.id),
+    verifiziert: {
+      mail: req.nutzer.email_bestaetigt,
+      telefon: req.nutzer.telefon_bestaetigt,
+      ausweis: req.nutzer.ausweis_geprueft,
+    },
+  });
+});
+
+/* ---------- Konto löschen (Pflicht für den App Store) ---------- */
+
+auth.post("/api/konto/loeschen", angemeldet, async (req, res) => {
+  await db.kontoLoeschen(req.nutzer.id);   // anonymisieren, Buchungen 10 Jahre aufbewahren (GoBD)
+  await db.sitzungenWiderrufen(req.nutzer.id);
+  res.json({ ok: true, hinweis: "Dein Konto ist gelöscht. Offenes Guthaben verfällt." });
+});
+
+const mail = { senden: async () => {} };  // hier Resend / Postmark einhängen
+const sms  = { senden: async () => {} };  // hier Twilio / MessageBird einhängen
+
+export default auth;
