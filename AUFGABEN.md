@@ -72,7 +72,7 @@ Fertig wenn: eine Auszahlung mit Status `pruefung` per Klick freigegeben werden 
 
 ## Block E — In die Stores
 
-**[ ] 15. Capacitor-Projekt**
+**[x] 15. Capacitor-Projekt**
 Vite-Projekt um `CoinCurb.jsx` bauen, Capacitor für iOS + Android, Geräte-Fingerprint (`x-device-id`) und Plattform-Header aus dem nativen Kontext setzen.
 Fertig wenn: Android-Debug-Build auf einem Gerät läuft.
 

@@ -151,6 +151,24 @@ Freigeben (führt die Auszahlung aus) oder Ablehnen (bucht das Guthaben zurück)
 oder ID und Sperrlisten-Einträge (nur als Hash gespeichert). Jede Aktion steht im Protokoll unten auf der Seite.
 Mit `Accept: application/json` liefern dieselben Routen JSON, z. B. für Skripte.
 
-## 7. Was noch fehlt
+## 7. App für Android und iOS (Capacitor)
+
+Das Projekt liegt unter `app/` und importiert `CoinCurb.jsx` direkt aus dem Wurzelverzeichnis.
+
+```
+cd app && npm install
+cp .env.example .env            # VITE_API_BASE auf das Backend zeigen lassen
+npx cap add android             # einmalig; erzeugt app/android (nicht im Repo)
+npm run android                 # build + sync + öffnet Android Studio → Debug-Build aufs Gerät
+npx cap add ios && npm run ios  # analog auf dem Mac mit Xcode
+```
+
+Beim Start liest `app/src/main.jsx` Plattform und Geräte-ID über `@capacitor/device` (Android: ANDROID_ID, iOS:
+identifierForVendor) und legt sie in `window.COINCURB_*`; `CoinCurb.jsx` schickt sie als `X-Platform` und `X-Device-Id`,
+Emulatoren zusätzlich als `X-Emulator: 1`. Im Backend muss `CORS_ORIGINS` die Capacitor-Origins enthalten
+(`https://localhost` für Android, `capacitor://localhost` für iOS), sonst blockt der Browser der App die Aufrufe.
+Vor dem Store: App-Icon und Splash in `app/android` bzw. `app/ios` ersetzen, `appId` in `capacitor.config.json` prüfen.
+
+## 8. Was noch fehlt
 
 Login und Konten, Datenbank (Postgres), Rechtstexte, App-Store-Freigabe (Apple verlangt bei Reward-Apps genaue Angaben zur Auszahlung), Support-Postfach. Die Coin-Umrechnung steht auf 60 % der Partner-Einnahme für den Nutzer — das ist der marktübliche Bereich.

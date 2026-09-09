@@ -97,8 +97,10 @@ const speicher = {
   set: (k, v) => { try { v == null ? localStorage.removeItem("cc." + k) : localStorage.setItem("cc." + k, v); } catch { /* privat/blockiert */ } },
 };
 
-/** Geräte-Kennung: im Browser eine zufällige UUID, in der App kommt sie aus dem nativen Kontext (Aufgabe 15) */
+/** Geräte-Kennung: in der App aus dem nativen Kontext (window.COINCURB_GERAET_ID, siehe app/src/main.jsx),
+    im Browser eine zufällige UUID, die im Speicher bleibt */
 function geraetId() {
+  if (typeof window !== "undefined" && window.COINCURB_GERAET_ID) return String(window.COINCURB_GERAET_ID);
   let id = speicher.get("geraet");
   if (!id) {
     id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now();
@@ -107,6 +109,11 @@ function geraetId() {
   return id;
 }
 const plattform = () => (typeof window !== "undefined" && window.COINCURB_PLATTFORM) || "web";
+const geraetKopf = () => {
+  const k = { "X-Device-Id": geraetId(), "X-Platform": plattform() };
+  if (typeof window !== "undefined" && window.COINCURB_EMULATOR === "1") k["X-Emulator"] = "1";
+  return k;
+};
 
 class ApiFehler extends Error {
   constructor(text, status, daten) { super(text); this.status = status; this.daten = daten || {}; }
@@ -128,7 +135,7 @@ function erneuern() {
     erneuerung = (async () => {
       try {
         const r = await fetch(API_BASE + "/api/token", {
-          method: "POST", headers: { "Content-Type": "application/json", "X-Device-Id": geraetId(), "X-Platform": plattform() },
+          method: "POST", headers: { "Content-Type": "application/json", ...geraetKopf() },
           body: JSON.stringify({ refresh: tokens.refresh }),
         });
         if (!r.ok) return false;
@@ -142,7 +149,7 @@ function erneuern() {
 
 /** Ein Aufruf ans Backend. Bei 401 einmal Token erneuern und wiederholen, sonst abmelden. */
 async function api(pfad, { method = "GET", body, auth = true, _wiederholt = false } = {}) {
-  const headers = { "Content-Type": "application/json", "X-Device-Id": geraetId(), "X-Platform": plattform() };
+  const headers = { "Content-Type": "application/json", ...geraetKopf() };
   if (auth && tokens.zugang) headers.Authorization = "Bearer " + tokens.zugang;
   let r;
   try {
