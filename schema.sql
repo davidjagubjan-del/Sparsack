@@ -77,6 +77,14 @@ CREATE TABLE nutzer_geraet (
 CREATE INDEX ON nutzer_geraet (geraet_id);
 CREATE INDEX ON nutzer_geraet (ip_hash);
 
+-- Ergebnis der Proxy-/VPN-Pruefung je IP (nur Hash), 24 h gueltig
+CREATE TABLE ip_netz (
+  ip_hash   TEXT PRIMARY KEY,
+  typ       TEXT NOT NULL,                       -- 'mobil' | 'kabel' | 'vpn' | 'rechenzentrum' | 'unbekannt'
+  land      TEXT,
+  geprueft  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 /* ---------- Geld ---------- */
 
 -- Jede Bewegung ist eine Zeile. Nichts wird überschrieben, nur ergänzt.

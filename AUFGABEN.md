@@ -34,7 +34,7 @@ Fertig wenn: pro Partner ein Test mit einem Beispiel-Postback aus der Doku grün
 Aufgabenstart clientseitig melden (`POST /api/aufgabe/start`), Tabelle dafür ergänzen, in `db.kennzahlenFuer` echte Werte für `medianDauerSek`, `gleicheAbstaende`, `stundenAmStueck`, `anteilHighPayout` berechnen.
 Fertig wenn: Regeln `zu_schnell` und `taktung` in Tests mit konstruierten Daten anschlagen.
 
-**[ ] 7. VPN-/Proxy-Erkennung**
+**[x] 7. VPN-/Proxy-Erkennung**
 `netzTyp()` in auth.js an IPQualityScore (oder ipdata) anbinden, Ergebnis cachen (24 h), Ausfall des Dienstes = „unbekannt", nie blockieren.
 Fertig wenn: bekannte Datacenter-IP als `rechenzentrum` erkannt wird und die Regel `vpn` Punkte vergibt.
 

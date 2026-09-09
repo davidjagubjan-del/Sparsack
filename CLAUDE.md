@@ -8,7 +8,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 
 - Node 18+, ESM (`"type": "module"`), Express, PostgreSQL 15+ — kein TypeScript, kein ORM
 - `server.js` — Partner-Postbacks (`PARTNER`: je Anbieter Signaturpruefung, Parameter-Mapping, Antwort; reine Formeln in `signaturen`), Auszahlungen, Betrugserkennung (16 Regeln + harte Sperren)
-- `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung
+- `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung, `netzTyp()` (IPQualityScore, Cache in `ip_netz`)
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien

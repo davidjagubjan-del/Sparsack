@@ -98,7 +98,9 @@ desselben Angebots), Taktung, Stunden am Stück und der Anteil teurer Angebote.
 3. **Stufen-Verifizierung** — Telefonnummer vor der ersten Auszahlung, Ausweis ab 100 € im Monat, Tageslimit 50 €.
 4. **Protokoll + Widerruf** — jede Sperre ist einsehbar und mit einem Klick rücknehmbar. Fehlalarme kosten dich echte Nutzer und 1-Sterne-Bewertungen.
 
-Zusätzlich einkaufen statt selbst bauen: **Proxy-Erkennung** (IPQualityScore, ipdata) und **Geräte-Fingerprint** (FingerprintJS Pro). Die eigene Erkennung ist gut genug für Gelegenheitsbetrug, nicht für Farmen mit hundert Geräten.
+**Proxy-Erkennung** läuft über IPQualityScore (`IPQS_KEY` in der `.env`): Ergebnis je IP-Hash 24 Stunden gecacht,
+private Adressen und Ausfälle des Dienstes ergeben „unbekannt" und blockieren nie. Ohne Key bleibt der Netztyp unbekannt.
+Zusätzlich einkaufen statt selbst bauen: **Geräte-Fingerprint** (FingerprintJS Pro). Die eigene Erkennung ist gut genug für Gelegenheitsbetrug, nicht für Farmen mit hundert Geräten.
 
 ## 4. Was noch fehlt
 

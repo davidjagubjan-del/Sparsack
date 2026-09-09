@@ -62,15 +62,50 @@ async function geraetErfassen(req, nutzerId) {
     emulator: req.headers["x-emulator"] === "1",
     rootJailbreak: req.headers["x-rooted"] === "1",
   });
+  const netz = await netzTyp(req.ip);
   await db.geraetVerknuepfen({
     nutzerId, geraetId: g.id, ipHash: hash(req.ip),
-    ipTyp: await netzTyp(req.ip), ipLand: req.headers["cf-ipcountry"],
+    ipTyp: netz.typ, ipLand: req.headers["cf-ipcountry"] || netz.land || null,
   });
   return g;
 }
 
-async function netzTyp(ip) {
-  // Hier IPQualityScore / ipdata anbinden. Ohne Anbieter: 'unbekannt'.
+/* ---------- Proxy-/VPN-Erkennung ueber IPQualityScore ----------
+   Ergebnis wird 24 h je IP-Hash gecacht (Tabelle ip_netz). Ohne Key, bei privaten
+   Adressen, Timeout oder Fehler des Dienstes: 'unbekannt' — nie blockieren, nie werfen. */
+
+const PRIVAT = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|::1$|fc|fd|fe80:|::ffff:(127\.|10\.|192\.168\.))/i;
+
+export async function netzTyp(ip) {
+  const unbekannt = { typ: "unbekannt", land: null };
+  if (!ip || PRIVAT.test(ip) || !process.env.IPQS_KEY) return unbekannt;
+  try {
+    const c = await db.netzAusCache(ip);
+    if (c) return c;
+  } catch { /* Cache-Fehler ist kein Grund zum Blockieren */ }
+
+  let ergebnis = unbekannt;
+  try {
+    const url = `https://ipqualityscore.com/api/json/ip/${encodeURIComponent(process.env.IPQS_KEY)}/${encodeURIComponent(ip)}`
+      + "?strictness=0&allow_public_access_points=true";
+    const r = await fetch(url, { signal: AbortSignal.timeout(Number(process.env.IPQS_TIMEOUT_MS || 3000)) });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.success === true) ergebnis = { typ: netzTypAus(d), land: d.country_code || null };
+    }
+  } catch { /* Timeout, Netzfehler, kaputtes JSON → unbekannt */ }
+
+  if (ergebnis.typ !== "unbekannt") db.netzMerken(ip, ergebnis.typ, ergebnis.land).catch(() => {});
+  return ergebnis;
+}
+
+/** IPQS-Antwort → unsere vier Netztypen */
+export function netzTypAus(d) {
+  const art = String(d.connection_type || "").toLowerCase();
+  if (d.tor || d.active_tor || d.vpn || d.active_vpn) return "vpn";
+  if (d.proxy || art === "data center") return "rechenzentrum";
+  if (d.mobile === true || art === "mobile") return "mobil";
+  if (["residential", "corporate", "education"].includes(art)) return "kabel";
   return "unbekannt";
 }
 

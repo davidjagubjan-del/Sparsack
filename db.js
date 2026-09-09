@@ -92,6 +92,13 @@ export const db = {
        ON CONFLICT (nutzer_id, geraet_id) DO UPDATE SET zuletzt=now(), ip_hash=$3, ip_typ=$4`,
       [nutzerId, geraetId, ipHash, ipTyp, ipLand]),
 
+  /* Proxy-/VPN-Pruefung: Ergebnis je IP-Hash, 24 Stunden gueltig */
+  netzAusCache: (ip) =>
+    eine(`SELECT typ, land FROM ip_netz WHERE ip_hash=$1 AND geprueft > now() - interval '24 hours'`, [hash(ip)]),
+  netzMerken: (ip, typ, land) =>
+    q(`INSERT INTO ip_netz (ip_hash, typ, land) VALUES ($1,$2,$3)
+       ON CONFLICT (ip_hash) DO UPDATE SET typ=$2, land=$3, geprueft=now()`, [hash(ip), typ, land]),
+
   aufSperrliste: async (typ, wert) =>
     !!(await eine(`SELECT 1 FROM sperrliste WHERE typ=$1 AND wert=$2`, [typ, hash(wert)])),
   aufSperrlisteSetzen: (typ, wert, grund) =>
