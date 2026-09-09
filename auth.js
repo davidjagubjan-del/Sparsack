@@ -12,6 +12,7 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { db, hash } from "./db.js";
 import { mail, sms } from "./versand.js";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const auth = express.Router();
 const GEHEIM = process.env.JWT_SECRET;              // in .env, mind. 32 Zeichen
@@ -170,14 +171,47 @@ auth.post("/api/anmelden", bremse(10, 15), async (req, res) => {
 
 /* Apple-Login ist im App Store Pflicht, sobald es andere Fremd-Logins gibt */
 auth.post("/api/anmelden/apple", bremse(20, 15), async (req, res) => {
-  const sub = await appleTokenPruefen(req.body.identityToken);   // Apple-Public-Keys prüfen
-  if (!sub) return res.status(401).json({ fehler: "Die Anmeldung bei Apple hat nicht geklappt." });
-  const nutzer = await db.nutzerNachApple(sub, req.body.email);
+  const a = await appleTokenPruefen(req.body.identityToken);   // Signatur, iss, aud, Ablauf
+  if (!a) return res.status(401).json({ fehler: "Die Anmeldung bei Apple hat nicht geklappt." });
+  // Apple liefert die E-Mail nur beim ersten Login im Token; die aus dem Body ist unbestaetigt
+  const email = a.email || (req.body.email && /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(req.body.email) ? String(req.body.email).toLowerCase() : null);
+  const nutzer = await db.nutzerNachApple(a.sub, email, !!a.email && a.emailBestaetigt);
+  if (nutzer.gesperrt) return res.status(403).json({ fehler: "Dieses Konto ist gesperrt.", grund: nutzer.sperrgrund });
+  if (nutzer.geloescht_am) return res.status(401).json({ fehler: "Die Anmeldung bei Apple hat nicht geklappt." });
   const geraet = await geraetErfassen(req, nutzer.id);
-  res.json({ zugang: tokenBauen(nutzer.id), refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip) });
+  await db.aktivGesehen(nutzer.id);
+  res.json({
+    zugang: tokenBauen(nutzer.id),
+    refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip),
+    naechsterSchritt: !nutzer.email_bestaetigt ? "email_bestaetigen" : !nutzer.telefon_bestaetigt ? "telefon_bestaetigen" : null,
+  });
 });
 
-async function appleTokenPruefen(token) { /* jose + https://appleid.apple.com/auth/keys */ return null; }
+/* Apples Schluessel werden von jose geholt und gecacht; Tests haengen ein lokales JWKS ein */
+export const apple = { jwks: null };
+const appleJwks = () => (apple.jwks ||= createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys")));
+
+/**
+ * Identity-Token aus "Sign in with Apple" pruefen.
+ * Liefert { sub, email, emailBestaetigt } oder null. aud = Bundle-ID (iOS) bzw. Services-ID (Web) aus APPLE_BUNDLE_ID.
+ */
+export async function appleTokenPruefen(token) {
+  const aud = String(process.env.APPLE_BUNDLE_ID || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!token || typeof token !== "string" || aud.length === 0) return null;
+  try {
+    const { payload } = await jwtVerify(token, appleJwks(), {
+      issuer: "https://appleid.apple.com", audience: aud, algorithms: ["RS256"],
+    });
+    if (!payload.sub) return null;
+    return {
+      sub: String(payload.sub),
+      email: typeof payload.email === "string" ? payload.email.toLowerCase() : null,
+      emailBestaetigt: payload.email_verified === true || payload.email_verified === "true",
+    };
+  } catch {
+    return null;   // falsche Signatur, fremder aud/iss, abgelaufen, kaputt — alles gleich behandeln
+  }
+}
 
 /* ---------- Token erneuern / abmelden ---------- */
 

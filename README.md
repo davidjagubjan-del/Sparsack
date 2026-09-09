@@ -124,6 +124,9 @@ SMS-Codes laufen über **Twilio Verify** (`TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_
 Code, Nummern werden in E.164 erwartet (`+49…`) und nur als Hash gespeichert. Ohne Twilio-Daten antworten die
 Telefon-Routen mit 503. Zum Testen reicht der Test-Modus beider Dienste (Resend: Test-Domain, Twilio: Trial-Konto).
 
+**Sign in with Apple** prüft das Identity-Token mit `jose` gegen `https://appleid.apple.com/auth/keys`
+(`iss`, `aud` = `APPLE_BUNDLE_ID`, Signatur, Ablauf). Beim Web-Login zusätzlich die Services-ID in `APPLE_BUNDLE_ID` eintragen.
+
 ## 5. Was noch fehlt
 
 Login und Konten, Datenbank (Postgres), Rechtstexte, App-Store-Freigabe (Apple verlangt bei Reward-Apps genaue Angaben zur Auszahlung), Support-Postfach. Die Coin-Umrechnung steht auf 60 % der Partner-Einnahme für den Nutzer — das ist der marktübliche Bereich.

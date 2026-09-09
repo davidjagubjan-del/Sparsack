@@ -43,3 +43,4 @@ process.env.MAIL_ABSENDER = "CoinCurb <no-reply@coincurb.test>";
 process.env.TWILIO_SID = "ACtest";
 process.env.TWILIO_TOKEN = "twilio-token";
 process.env.TWILIO_VERIFY_SID = "VAtest";
+process.env.APPLE_BUNDLE_ID = "app.coincurb.ios,app.coincurb.web";

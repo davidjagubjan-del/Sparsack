@@ -36,10 +36,12 @@ export const db = {
     eine(`INSERT INTO nutzer (email, passwort_hash, anzeigename, geworben_von)
           VALUES ($1,$2,$3,$4) RETURNING *`, [email, passwortHash, anzeigename, geworbenVon]),
 
-  nutzerNachApple: async (sub, email) =>
+  /** Apple-Konto laden oder anlegen; ohne E-Mail im Token bekommt das Konto eine Platzhalter-Adresse */
+  nutzerNachApple: async (sub, email, emailBestaetigt = false) =>
     (await eine(`SELECT * FROM nutzer WHERE apple_sub=$1`, [sub])) ||
     (await eine(`INSERT INTO nutzer (apple_sub, email, anzeigename, email_bestaetigt)
-                 VALUES ($1,$2,$3,TRUE) RETURNING *`, [sub, email, (email || "Spieler").split("@")[0]])),
+                 VALUES ($1,$2,$3,$4) RETURNING *`,
+      [sub, email || `${sub}@apple.invalid`, (email || "Spieler").split("@")[0].slice(0, 24), emailBestaetigt])),
 
   nutzerSperren: async (id, grund) => {
     await q(`UPDATE nutzer SET gesperrt=TRUE, sperrgrund=$2 WHERE id=$1`, [id, grund]);

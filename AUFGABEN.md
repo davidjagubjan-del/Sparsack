@@ -58,7 +58,7 @@ Fertig wenn: `SELECT ziel FROM auszahlungen` nur Ciphertext zeigt, Auszahlung tr
 `mail.senden` über Resend, `sms.senden` über Twilio Verify oder MessageBird. Absender/Keys aus `.env`.
 Fertig wenn: Registrierungs-Mail und SMS-Code real ankommen (Test-Modus der Dienste reicht).
 
-**[ ] 12. Apple Sign-In prüfen**
+**[x] 12. Apple Sign-In prüfen**
 `appleTokenPruefen()` mit `jose` gegen `https://appleid.apple.com/auth/keys` implementieren, `aud` (Bundle-ID aus `.env`) und `iss` prüfen.
 Fertig wenn: manipuliertes Token abgelehnt, gültiges Sandbox-Token akzeptiert wird.
 
