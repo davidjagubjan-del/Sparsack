@@ -11,6 +11,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { db, hash } from "./db.js";
+import { mail, sms } from "./versand.js";
 
 const auth = express.Router();
 const GEHEIM = process.env.JWT_SECRET;              // in .env, mind. 32 Zeichen
@@ -136,7 +137,7 @@ auth.post("/api/registrieren", bremse(5, 60), async (req, res) => {
     return res.status(403).json({ fehler: "Auf diesem Gerät ist keine Anmeldung möglich." });
   }
 
-  await mailCodeSenden(nutzer);
+  await mailCodeSenden(nutzer);            // Fehler landen im Protokoll, Nutzer kann neu anfordern
   res.json({
     zugang: tokenBauen(nutzer.id),
     refresh: await refreshBauen(nutzer.id, geraet?.id, req.ip),
@@ -205,9 +206,23 @@ auth.post("/api/abmelden", angemeldet, async (req, res) => {
 async function mailCodeSenden(nutzer) {
   const code = crypto.randomBytes(24).toString("base64url");
   await db.codeAnlegen({ nutzerId: nutzer.id, zweck: "email", codeHash: hash(code), minuten: 60 });
-  await mail.senden(nutzer.email, "Bestätige deine E-Mail",
-    `Tippe hier, um dein Konto freizuschalten: ${process.env.APP_URL}/bestaetigen?c=${code}`);
+  try {
+    return await mail.senden(nutzer.email, "Bestätige deine E-Mail bei CoinCurb",
+      `Hallo ${nutzer.anzeigename},\n\ntippe hier, um dein Konto freizuschalten (60 Minuten gültig):\n`
+      + `${process.env.APP_URL}/bestaetigen?c=${code}\n\nWarst du das nicht? Dann ignoriere diese Mail einfach.`);
+  } catch (e) {
+    await db.protokoll(nutzer.id, "mail_fehler", { zweck: "email", fehler: String(e.message || e).slice(0, 160) });
+    return false;
+  }
 }
+
+/* Bestätigungsmail noch einmal anfordern */
+auth.post("/api/email/erneut", angemeldet, bremse(3, 60), async (req, res) => {
+  if (req.nutzer.email_bestaetigt) return res.status(400).json({ fehler: "Deine E-Mail ist schon bestätigt." });
+  const ok = await mailCodeSenden(req.nutzer);
+  if (!ok) return res.status(502).json({ fehler: "Die Mail konnte gerade nicht verschickt werden. Versuch es in ein paar Minuten noch einmal." });
+  res.json({ ok: true });
+});
 
 auth.get("/api/email/bestaetigen", bremse(20, 60), async (req, res) => {
   const treffer = await db.codeEinloesen({ zweck: "email", codeHash: hash(req.query.c || "") });
@@ -217,25 +232,45 @@ auth.get("/api/email/bestaetigen", bremse(20, 60), async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Telefon bestätigen (vor der ersten Auszahlung) ---------- */
+/* ---------- Telefon bestätigen (vor der ersten Auszahlung) ----------
+   Twilio Verify erzeugt und prueft den Code; wir speichern nur den Hash der bestaetigten Nummer. */
+
+const E164 = /^\+[1-9]\d{6,14}$/;
+const nummerAus = (roh) => String(roh || "").replace(/[\s\-()]/g, "").replace(/^00/, "+");
 
 auth.post("/api/telefon/code", angemeldet, bremse(5, 60), async (req, res) => {
-  const nummer = String(req.body.telefon || "").replace(/[^\d+]/g, "");
+  const nummer = nummerAus(req.body.telefon);
+  if (!E164.test(nummer))
+    return res.status(400).json({ fehler: "Bitte gib deine Nummer mit Ländervorwahl an, zum Beispiel +49 170 1234567." });
   if (await db.telefonVergeben(nummer, req.nutzer.id))
     return res.status(409).json({ fehler: "Diese Nummer gehört bereits zu einem anderen Konto." });
-
-  const code = String(Math.floor(100000 + Math.random() * 899999));
-  await db.codeAnlegen({ nutzerId: req.nutzer.id, zweck: "telefon", codeHash: hash(code + nummer), minuten: 10 });
-  await sms.senden(nummer, `Dein CoinCurb-Code: ${code}`);
+  if (!sms.eingerichtet())
+    return res.status(503).json({ fehler: "Der SMS-Versand ist gerade nicht möglich. Bitte versuch es später noch einmal." });
+  try {
+    await sms.codeSenden(nummer);
+  } catch (e) {
+    await db.protokoll(req.nutzer.id, "sms_fehler", { fehler: String(e.message || e).slice(0, 160) });
+    return res.status(502).json({ fehler: "Die SMS konnte nicht verschickt werden. Prüf die Nummer und versuch es gleich noch einmal." });
+  }
   res.json({ ok: true });
 });
 
 auth.post("/api/telefon/pruefen", angemeldet, bremse(10, 60), async (req, res) => {
-  const nummer = String(req.body.telefon || "").replace(/[^\d+]/g, "");
-  const treffer = await db.codeEinloesen({
-    zweck: "telefon", nutzerId: req.nutzer.id, codeHash: hash(String(req.body.code) + nummer), maxVersuche: 5,
-  });
-  if (!treffer) return res.status(400).json({ fehler: "Der Code stimmt nicht oder ist abgelaufen." });
+  const nummer = nummerAus(req.body.telefon);
+  const code = String(req.body.code || "").trim();
+  if (!E164.test(nummer) || !/^\d{4,10}$/.test(code))
+    return res.status(400).json({ fehler: "Der Code stimmt nicht oder ist abgelaufen." });
+  if (await db.telefonVergeben(nummer, req.nutzer.id))
+    return res.status(409).json({ fehler: "Diese Nummer gehört bereits zu einem anderen Konto." });
+  if (!sms.eingerichtet())
+    return res.status(503).json({ fehler: "Die Prüfung ist gerade nicht möglich. Bitte versuch es später noch einmal." });
+  let ok = false;
+  try { ok = await sms.codePruefen(nummer, code); }
+  catch (e) {
+    await db.protokoll(req.nutzer.id, "sms_fehler", { fehler: String(e.message || e).slice(0, 160) });
+    return res.status(502).json({ fehler: "Die Prüfung hat gerade nicht geklappt. Versuch es gleich noch einmal." });
+  }
+  if (!ok) return res.status(400).json({ fehler: "Der Code stimmt nicht oder ist abgelaufen." });
   await db.telefonBestaetigt(req.nutzer.id, nummer);
   res.json({ ok: true });
 });
@@ -264,8 +299,5 @@ auth.post("/api/konto/loeschen", angemeldet, async (req, res) => {
   await db.sitzungenWiderrufen(req.nutzer.id);
   res.json({ ok: true, hinweis: "Dein Konto ist gelöscht. Offenes Guthaben verfällt." });
 });
-
-const mail = { senden: async () => {} };  // hier Resend / Postmark einhängen
-const sms  = { senden: async () => {} };  // hier Twilio / MessageBird einhängen
 
 export default auth;

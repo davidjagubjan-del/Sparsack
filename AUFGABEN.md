@@ -54,7 +54,7 @@ Fertig wenn: `SELECT ziel FROM auszahlungen` nur Ciphertext zeigt, Auszahlung tr
 
 ## Block D — Anbindung & Versand
 
-**[ ] 11. Mail + SMS echt versenden**
+**[x] 11. Mail + SMS echt versenden**
 `mail.senden` über Resend, `sms.senden` über Twilio Verify oder MessageBird. Absender/Keys aus `.env`.
 Fertig wenn: Registrierungs-Mail und SMS-Code real ankommen (Test-Modus der Dienste reicht).
 

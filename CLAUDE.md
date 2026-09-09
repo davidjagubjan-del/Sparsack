@@ -10,6 +10,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `server.js` — Partner-Postbacks (`PARTNER`: je Anbieter Signaturpruefung, Parameter-Mapping, Antwort; reine Formeln in `signaturen`), Auszahlungen, Betrugserkennung (16 Regeln + harte Sperren)
 - `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung, `netzTyp()` (IPQualityScore, Cache in `ip_netz`)
 - `auszahlung.js` — Zahlungsdienste: PayPal Payouts (`paypal`), Tango Card RaaS (`tango`); bekommen Auftrag + entschlüsseltes Ziel, liefern `{ status, ref, grund }`, werfen bei Dienstfehlern
+- `versand.js` — Mail über Resend (`mail.senden`), SMS-Codes über Twilio Verify (`sms.codeSenden` / `sms.codePruefen`; Twilio erzeugt und prüft den Code, bei uns liegt nur der Hash der bestätigten Nummer)
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`; `auszahlungZiel()` ist die einzige Stelle, die ein Auszahlungsziel entschlüsselt
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien

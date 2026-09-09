@@ -116,6 +116,14 @@ desselben Angebots), Taktung, Stunden am Stück und der Anteil teurer Angebote.
 private Adressen und Ausfälle des Dienstes ergeben „unbekannt" und blockieren nie. Ohne Key bleibt der Netztyp unbekannt.
 Zusätzlich einkaufen statt selbst bauen: **Geräte-Fingerprint** (FingerprintJS Pro). Die eigene Erkennung ist gut genug für Gelegenheitsbetrug, nicht für Farmen mit hundert Geräten.
 
-## 4. Was noch fehlt
+## 4. Mail und SMS
+
+Bestätigungsmails gehen über **Resend** (`RESEND_KEY`, `MAIL_ABSENDER` mit dort verifizierter Domain). Schlägt der Versand
+fehl, bleibt die Registrierung gültig; die Mail lässt sich über `POST /api/email/erneut` neu anfordern.
+SMS-Codes laufen über **Twilio Verify** (`TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_VERIFY_SID`): Twilio erzeugt und prüft den
+Code, Nummern werden in E.164 erwartet (`+49…`) und nur als Hash gespeichert. Ohne Twilio-Daten antworten die
+Telefon-Routen mit 503. Zum Testen reicht der Test-Modus beider Dienste (Resend: Test-Domain, Twilio: Trial-Konto).
+
+## 5. Was noch fehlt
 
 Login und Konten, Datenbank (Postgres), Rechtstexte, App-Store-Freigabe (Apple verlangt bei Reward-Apps genaue Angaben zur Auszahlung), Support-Postfach. Die Coin-Umrechnung steht auf 60 % der Partner-Einnahme für den Nutzer — das ist der marktübliche Bereich.

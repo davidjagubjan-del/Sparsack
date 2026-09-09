@@ -37,3 +37,9 @@ process.env.TANGO_ACCOUNT = "konto-1";
 process.env.TANGO_CUSTOMER = "kunde-1";
 process.env.TANGO_UTID_AMAZON = "U-AMAZON-DE";
 process.env.TANGO_UTID_STEAM = "U-STEAM-EUR";
+
+process.env.RESEND_KEY = "re_test";
+process.env.MAIL_ABSENDER = "CoinCurb <no-reply@coincurb.test>";
+process.env.TWILIO_SID = "ACtest";
+process.env.TWILIO_TOKEN = "twilio-token";
+process.env.TWILIO_VERIFY_SID = "VAtest";
