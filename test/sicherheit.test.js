@@ -13,6 +13,7 @@ describe("Aufgabe 2 — helmet + CORS", () => {
     expect(r.headers["x-frame-options"]).toBeDefined();
     expect(r.headers["strict-transport-security"]).toBeDefined();
     expect(r.headers["x-powered-by"]).toBeUndefined();
+    expect(r.headers["referrer-policy"]).toBe("same-origin");
   });
 
   it("erlaubt die eigene Origin", async () => {
@@ -30,6 +31,15 @@ describe("Aufgabe 2 — helmet + CORS", () => {
     const pre = await request(app).options("/api/auszahlung")
       .set("Origin", "https://boese.example").set("Access-Control-Request-Method", "POST");
     expect(pre.status).toBe(403);
+  });
+
+  it("erlaubt die eigene Origin des Servers (same-origin-Formulare im Admin)", async () => {
+    const r = await request(app).get("/api/ich").set("Host", "api.coincurb.test").set("Origin", "http://api.coincurb.test");
+    expect(r.status).toBe(401);
+    expect(r.headers["access-control-allow-origin"]).toBe("http://api.coincurb.test");
+    const r2 = await request(app).get("/api/ich").set("Host", "api.coincurb.test").set("Origin", "http://api.coincurb.test.boese.example");
+    expect(r2.status).toBe(403);
+    expect((await request(app).get("/api/ich").set("Origin", "null")).status).toBe(403);
   });
 
   it("laesst Anfragen ohne Origin durch (Postbacks, native App)", async () => {

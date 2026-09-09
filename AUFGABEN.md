@@ -66,7 +66,7 @@ Fertig wenn: manipuliertes Token abgelehnt, gültiges Sandbox-Token akzeptiert w
 In `CoinCurb.jsx` einen fetch-Layer bauen (Login-Screen, Token-Refresh, `API_BASE` aus Config). Demo-Daten nur noch als Fallback, wenn `API_BASE` leer ist. Screens auf `/api/ich`, `/api/security`, `/api/walls`, `/api/auszahlung` umstellen.
 Fertig wenn: kompletter Durchlauf Registrieren → Aufgabe (Test-Postback) → Guthaben sichtbar → Auszahlung angefordert im Browser klappt.
 
-**[ ] 14. Admin-Bereich (minimal)**
+**[x] 14. Admin-Bereich (minimal)**
 Eigene Routen unter `/admin` mit separatem Passwort (`.env`): offene Auszahlungen mit Risiko-Treffern listen, freigeben/ablehnen, Konto sperren/entsperren, Sperrlisten-Eintrag. Jede Aktion in `protokoll`.
 Fertig wenn: eine Auszahlung mit Status `pruefung` per Klick freigegeben werden kann.
 

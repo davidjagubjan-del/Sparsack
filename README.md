@@ -143,6 +143,14 @@ Der Link aus der Bestätigungsmail führt auf `APP_URL/bestaetigen?c=…`; die A
 Geräte-Kennung und Plattform gehen als `X-Device-Id` / `X-Platform` mit (im Browser eine zufällige UUID, in der App aus dem
 nativen Kontext, Aufgabe 15).
 
-## 6. Was noch fehlt
+## 6. Admin-Bereich
+
+`https://api.deine-domain.de/admin` mit Nutzername `admin` und `ADMIN_PASSWORT` aus der `.env` (mindestens 16 Zeichen,
+sonst bleibt der Bereich zu). Zeigt Auszahlungen in Prüfung mit Risiko-Punkten und Treffern, je ein Klick für
+Freigeben (führt die Auszahlung aus) oder Ablehnen (bucht das Guthaben zurück), dazu Konto sperren/entsperren per E-Mail
+oder ID und Sperrlisten-Einträge (nur als Hash gespeichert). Jede Aktion steht im Protokoll unten auf der Seite.
+Mit `Accept: application/json` liefern dieselben Routen JSON, z. B. für Skripte.
+
+## 7. Was noch fehlt
 
 Login und Konten, Datenbank (Postgres), Rechtstexte, App-Store-Freigabe (Apple verlangt bei Reward-Apps genaue Angaben zur Auszahlung), Support-Postfach. Die Coin-Umrechnung steht auf 60 % der Partner-Einnahme für den Nutzer — das ist der marktübliche Bereich.

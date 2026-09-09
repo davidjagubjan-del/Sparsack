@@ -18,11 +18,17 @@ import { pathToFileURL } from "url";
 import { db } from "./db.js";
 import auth, { angemeldet } from "./auth.js";
 import { paypal, tango } from "./auszahlung.js";
+import adminRouter from "./admin.js";
 
 const app = express();
 app.set("trust proxy", 1);   // hinter Railway/Render sonst falsche IPs bei Allowlist und Rate-Limit
 app.disable("x-powered-by");
-app.use(helmet());           // Security-Header (nosniff, frame-deny, HSTS, ...)
+app.use(helmet({             // Security-Header (nosniff, frame-deny, HSTS, ...)
+  contentSecurityPolicy: { directives: { ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+    ...(String(process.env.APP_URL || "").startsWith("https://") ? {} : { "upgrade-insecure-requests": null }) } },
+  // "no-referrer" (Standard) laesst Browser bei same-origin-Formularen "Origin: null" schicken — dann kaeme der Admin nie durch
+  referrerPolicy: { policy: "same-origin" },
+}));
 
 /* CORS: Browser-Aufrufe nur von der eigenen Web-App. Anfragen ohne Origin
    (Partner-Postbacks, native App, curl) haben kein CORS und bleiben erlaubt.
@@ -30,12 +36,15 @@ app.use(helmet());           // Security-Header (nosniff, frame-deny, HSTS, ...)
 const ORIGINS = [process.env.APP_URL, ...(process.env.CORS_ORIGINS || "").split(",")]
   .map((o) => (o || "").trim().replace(/\/$/, "")).filter(Boolean);
 class FremdeOrigin extends Error { constructor() { super("fremde Origin"); this.status = 403; } }
-app.use(cors({
-  origin: (origin, cb) => (!origin || ORIGINS.includes(origin)) ? cb(null, true) : cb(new FremdeOrigin()),
+/* Erlaubt: keine Origin, APP_URL/CORS_ORIGINS oder die eigene Origin des Servers
+   (Browser schicken auch bei same-origin-POSTs einen Origin-Header, z.B. im Admin-Bereich). */
+app.use((req, res, next) => cors({
+  origin: (origin, cb) => (!origin || ORIGINS.includes(origin) || origin === `${req.protocol}://${req.get("host")}`)
+    ? cb(null, true) : cb(new FremdeOrigin()),
   methods: ["GET", "POST"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Device-Id", "X-Platform", "X-Emulator", "X-Rooted"],
   maxAge: 600,
-}));
+})(req, res, next));
 
 app.use(express.json({ limit: "50kb" }));
 app.use(auth);               // Login-Routen aus auth.js
@@ -214,7 +223,7 @@ export async function auszahlungAusfuehren(auftrag) {
   return auszahlungAbschliessen(auftrag, ergebnis);
 }
 
-async function auszahlungAbschliessen(auftrag, { status, ref = null, grund = null }) {
+export async function auszahlungAbschliessen(auftrag, { status, ref = null, grund = null }) {
   const a = await db.auszahlungAbschliessen({ id: auftrag.id, status, anbieterRef: ref });
   if (!a) return auftrag.status;                              // war schon erledigt — nichts doppelt buchen
   if (status === "abgelehnt") {
@@ -525,6 +534,9 @@ const walls = {
       .map(([id, p]) => ({ id, name: p.name, typ: p.typ, appInstalls: p.appInstalls, url: p.wall(encodeURIComponent(nutzerId)) || null }))
       .filter((w) => w.url),
 };
+
+/* Admin-Bereich: eigenes Passwort, siehe admin.js */
+app.use("/admin", adminRouter({ auszahlungAusfuehren, auszahlungAbschliessen }));
 
 /* ============================================================
    7. Fehler — nie Technik-Details nach aussen

@@ -43,13 +43,13 @@ export const db = {
                  VALUES ($1,$2,$3,$4) RETURNING *`,
       [sub, email || `${sub}@apple.invalid`, (email || "Spieler").split("@")[0].slice(0, 24), emailBestaetigt])),
 
-  nutzerSperren: async (id, grund) => {
+  nutzerSperren: async (id, grund, wer = "system") => {
     await q(`UPDATE nutzer SET gesperrt=TRUE, sperrgrund=$2 WHERE id=$1`, [id, grund]);
-    await db.protokoll(id, "sperre", { grund });
+    await db.protokoll(id, "sperre", { grund }, wer);
   },
-  nutzerEntsperren: async (id, wer) => {
+  nutzerEntsperren: async (id, wer = "system") => {
     await q(`UPDATE nutzer SET gesperrt=FALSE, sperrgrund=NULL WHERE id=$1`, [id]);
-    await db.protokoll(id, "entsperrt", { wer });
+    await db.protokoll(id, "entsperrt", {}, wer);
   },
 
   emailBestaetigt: (id) => q(`UPDATE nutzer SET email_bestaetigt=TRUE WHERE id=$1`, [id]),
@@ -278,6 +278,20 @@ export const db = {
                           WHERE nutzer_id=$1 ORDER BY id DESC LIMIT 50`, [nutzerId])).rows,
     auszahlungen: (await q(`SELECT beleg_nr, methode, betrag_eur, gebuehr_eur, status, erstellt, erledigt FROM auszahlungen
                              WHERE nutzer_id=$1 ORDER BY erstellt DESC LIMIT 20`, [nutzerId])).rows,
+  }),
+
+  /* ---------- Admin ---------- */
+
+  adminUebersicht: async () => ({
+    // offene Auszahlungen mit dem juengsten Risiko-Ergebnis zur Auszahlung
+    auszahlungen: (await q(`
+      SELECT a.id, a.beleg_nr, a.nutzer_id, a.methode, a.betrag_eur, a.status, a.risiko_punkte, a.erstellt,
+             n.email, n.anzeigename, n.telefon_bestaetigt, n.ausweis_geprueft,
+             (SELECT treffer FROM risiko_verlauf r WHERE r.nutzer_id=a.nutzer_id ORDER BY r.id DESC LIMIT 1) AS treffer
+        FROM auszahlungen a JOIN nutzer n ON n.id=a.nutzer_id
+       WHERE a.status='pruefung' ORDER BY a.erstellt`)).rows,
+    gesperrte: (await q(`SELECT id, email, sperrgrund FROM nutzer WHERE gesperrt AND geloescht_am IS NULL ORDER BY zuletzt_aktiv DESC NULLS LAST LIMIT 50`)).rows,
+    protokoll: (await q(`SELECT p.*, n.email FROM protokoll p LEFT JOIN nutzer n ON n.id=p.nutzer_id ORDER BY p.id DESC LIMIT 40`)).rows,
   }),
 
   /* ---------- Kennzahlen für die Betrugserkennung ---------- */

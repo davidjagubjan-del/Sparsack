@@ -11,6 +11,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung, `netzTyp()` (IPQualityScore, Cache in `ip_netz`)
 - `auszahlung.js` — Zahlungsdienste: PayPal Payouts (`paypal`), Tango Card RaaS (`tango`); bekommen Auftrag + entschlüsseltes Ziel, liefern `{ status, ref, grund }`, werfen bei Dienstfehlern
 - `versand.js` — Mail über Resend (`mail.senden`), SMS-Codes über Twilio Verify (`sms.codeSenden` / `sms.codePruefen`; Twilio erzeugt und prüft den Code, bei uns liegt nur der Hash der bestätigten Nummer)
+- `admin.js` — Admin-Router unter `/admin` (HTTP Basic mit `ADMIN_PASSWORT`, Nutzer „admin“; HTML-Formulare und JSON); Auszahlungen in Prüfung freigeben/ablehnen, Konten sperren/entsperren, Sperrliste; jede Aktion im `protokoll` mit `wer = "admin"`; POSTs nur von der eigenen Origin
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`; `auszahlungZiel()` ist die einzige Stelle, die ein Auszahlungsziel entschlüsselt
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien
@@ -18,6 +19,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - Start: `npm install && npm start` — bricht ohne gültige `.env` bewusst ab (siehe `.env.example`)
 - `server.js` exportiert die App (`export default app`) und lauscht nur beim direkten Start; Tests importieren sie
 - Auszahlungswege werden über `AUSZAHLUNG_AKTIV`, Partner-IP-Listen über `<PARTNER>_IPS` in der `.env` geschaltet
+- helmet läuft mit `Referrer-Policy: same-origin` (bei `no-referrer` schicken Browser `Origin: null` und same-origin-Formulare scheitern an CORS); CORS erlaubt `APP_URL`, `CORS_ORIGINS` und die eigene Origin des Servers
 
 ## Unumstößliche Regeln
 
