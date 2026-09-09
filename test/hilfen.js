@@ -87,3 +87,32 @@ export function senden(app, partner, felder, kopf = {}) {
   const { url, headers } = postback(partner, felder);
   return request(app).get(url).set({ ...headers, ...kopf });
 }
+
+/**
+ * Gemockte Zahlungsdienste (PayPal Payouts, Tango Card) als Ersatz fuer global fetch.
+ * `antworten` ueberschreibt einzelne Faelle; alles Unbekannte liefert 404.
+ * Jeder Aufruf landet in `aufrufe` ({ url, methode, headers, body }).
+ */
+export function zahlungsMock(antworten = {}) {
+  const aufrufe = [];
+  const json = (status, d) => ({ ok: status < 400, status, text: async () => JSON.stringify(d) });
+  const f = async (url, opt = {}) => {
+    const body = opt.body ? JSON.parse(opt.body.startsWith("{") ? opt.body : "{}") : null;
+    aufrufe.push({ url, methode: opt.method || "GET", headers: opt.headers || {}, body, roh: opt.body });
+    if (url.endsWith("/v1/oauth2/token"))
+      return json(200, antworten.token ?? { access_token: "tok-1", expires_in: 3600 });
+    if (url.endsWith("/v1/payments/payouts") && opt.method === "POST")
+      return typeof antworten.payout === "function" ? antworten.payout(body) :
+        json(201, antworten.payout ?? { batch_header: { payout_batch_id: "BATCH-1", batch_status: "PENDING" } });
+    if (/\/v1\/payments\/payouts\/[^/]+$/.test(url))
+      return json(200, antworten.status ?? { batch_header: { payout_batch_id: url.split("/").pop(), batch_status: "SUCCESS" },
+        items: [{ transaction_status: "SUCCESS" }] });
+    if (url.endsWith("/raas/v2/orders"))
+      return typeof antworten.tango === "function" ? antworten.tango(body) :
+        json(201, antworten.tango ?? { referenceOrderID: "RA-1", status: "COMPLETE",
+          reward: { credentials: { "Claim Code": "GEHEIM-CODE-XYZ" }, credentialList: [{ label: "Claim Code", value: "GEHEIM-CODE-XYZ" }] } });
+    return json(404, { name: "NOT_FOUND" });
+  };
+  f.aufrufe = aufrufe;
+  return f;
+}

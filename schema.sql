@@ -111,7 +111,7 @@ CREATE TABLE auszahlungen (
   beleg_nr      TEXT UNIQUE NOT NULL,
   nutzer_id     UUID NOT NULL REFERENCES nutzer(id),
   methode       TEXT NOT NULL,
-  ziel          TEXT NOT NULL,                   -- E-Mail, IBAN, Wallet
+  ziel          BYTEA NOT NULL,                  -- E-Mail, IBAN, Wallet — pgp_sym_encrypt mit ZIEL_SCHLUESSEL
   ziel_hash     TEXT NOT NULL,                   -- für die Mehrfachkonto-Prüfung
   betrag_eur    NUMERIC(10,2) NOT NULL,
   gebuehr_eur   NUMERIC(10,2) NOT NULL DEFAULT 0,

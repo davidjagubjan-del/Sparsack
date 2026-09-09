@@ -17,6 +17,11 @@ if (!process.env.HASH_PEPPER || process.env.HASH_PEPPER.length < 32)
 export const hash = (wert) =>
   crypto.createHmac("sha256", process.env.HASH_PEPPER).update(String(wert)).digest("hex");
 
+/** Auszahlungsziele liegen verschluesselt in der DB (pgcrypto), Klartext nur beim Senden. */
+if (!process.env.ZIEL_SCHLUESSEL || process.env.ZIEL_SCHLUESSEL.length < 32)
+  throw new Error("ZIEL_SCHLUESSEL fehlt oder ist zu kurz (mindestens 32 Zeichen).");
+const ZIEL_SCHLUESSEL = process.env.ZIEL_SCHLUESSEL;
+
 const HALTEFRIST_STD = 72;
 
 export const db = {
@@ -141,8 +146,26 @@ export const db = {
 
   auszahlungAnlegen: ({ nutzerId, methode, ziel, betrag, gebuehr, status, risiko }) =>
     eine(`INSERT INTO auszahlungen (beleg_nr, nutzer_id, methode, ziel, ziel_hash, betrag_eur, gebuehr_eur, status, risiko_punkte)
-          VALUES ('AZ-'||lpad((random()*899999+100000)::int::text,6,'0'),$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [nutzerId, methode, ziel, hash(ziel), betrag, gebuehr, status, risiko.punkte]),
+          VALUES ('AZ-'||lpad((random()*899999+100000)::int::text,6,'0'),$1,$2,pgp_sym_encrypt($3,$9),$4,$5,$6,$7,$8) RETURNING *`,
+      [nutzerId, methode, ziel, hash(ziel), betrag, gebuehr, status, risiko.punkte, ZIEL_SCHLUESSEL]),
+
+  auszahlung: (id) => eine(`SELECT * FROM auszahlungen WHERE id=$1`, [id]),
+
+  /** Einzige Stelle, die das Ziel entschluesselt — nur fuer senden() gedacht */
+  auszahlungZiel: async (id) =>
+    (await eine(`SELECT pgp_sym_decrypt(ziel, $2) AS ziel FROM auszahlungen WHERE id=$1`, [id, ZIEL_SCHLUESSEL]))?.ziel ?? null,
+
+  /** Status nur aus 'laeuft' oder 'pruefung' heraus setzen — liefert null, wenn schon erledigt (kein Doppel-Refund) */
+  auszahlungAbschliessen: ({ id, status, anbieterRef = null, bearbeiter = "system" }) =>
+    eine(`UPDATE auszahlungen
+             SET status=$2, anbieter_ref=COALESCE($3, anbieter_ref), bearbeiter=$4,
+                 erledigt = CASE WHEN $2 IN ('ausgezahlt','abgelehnt') THEN now() END
+           WHERE id=$1 AND status IN ('laeuft','pruefung') RETURNING *`, [id, status, anbieterRef, bearbeiter]),
+
+  /** Laufende Auszahlungen mit Referenz beim Anbieter, die noch ein Endergebnis brauchen */
+  auszahlungenOffen: async () =>
+    (await q(`SELECT * FROM auszahlungen WHERE status='laeuft' AND anbieter_ref IS NOT NULL
+               AND erstellt > now() - interval '30 days' ORDER BY erstellt`)).rows,
 
   ausgezahltImMonat: async (nutzerId) => {
     const r = await eine(
@@ -248,7 +271,9 @@ export const db = {
 
   /* ---------- Kennzahlen für die Betrugserkennung ---------- */
 
-  kennzahlenFuer: async (nutzerId) => {
+  /** `ziel` = das gerade angefragte Auszahlungsziel, damit Mehrfachkonto- und Sperrlisten-Pruefung es schon sehen */
+  kennzahlenFuer: async (nutzerId, { ziel = null } = {}) => {
+    const zielHash = ziel == null ? null : hash(ziel);
     const k = await eine(`
       WITH g AS (SELECT geraet_id, ip_hash FROM nutzer_geraet WHERE nutzer_id=$1)
       SELECT
@@ -265,16 +290,19 @@ export const db = {
         (SELECT EXTRACT(day FROM now()-erstellt) FROM nutzer WHERE id=$1)       AS konto_alter_tage,
         (SELECT COUNT(*) FROM buchungen WHERE nutzer_id=$1 AND art='aufgabe')   AS abschluesse,
         (SELECT COALESCE(SUM(coins),0)/1000.0 FROM buchungen
-          WHERE nutzer_id=$1 AND coins>0)                                       AS verdient_eur,
+          WHERE nutzer_id=$1 AND coins>0 AND art IN ('aufgabe','bonus','werbung')) AS verdient_eur,
         (SELECT COUNT(*)::float / GREATEST(COUNT(*) FILTER (WHERE status<>'storniert'),1)
            FROM buchungen WHERE nutzer_id=$1 AND status='storniert')            AS storno_quote,
         (SELECT COUNT(DISTINCT a2.nutzer_id) FROM auszahlungen a1
            JOIN auszahlungen a2 ON a1.ziel_hash=a2.ziel_hash
           WHERE a1.nutzer_id=$1)                                                AS konten_gleiche_adresse,
+        (SELECT COUNT(DISTINCT nutzer_id) FROM auszahlungen
+          WHERE $2::text IS NOT NULL AND ziel_hash=$2 AND nutzer_id<>$1)         AS konten_gleiche_adresse_neu,
+        (SELECT TRUE FROM sperrliste WHERE typ='auszahlziel' AND wert=$2)        AS ziel_gesperrt,
         (SELECT COUNT(*) FROM nutzer WHERE geworben_von=$1)                     AS refs,
         (SELECT COUNT(*) FROM nutzer w JOIN nutzer_geraet ng ON ng.nutzer_id=w.id
           WHERE w.geworben_von=$1 AND ng.geraet_id IN (SELECT geraet_id FROM g))AS refs_gleiches_geraet
-      `, [nutzerId]);
+      `, [nutzerId, zielHash]);
     const v = await db.verhaltenFuer(nutzerId);
 
     return {
@@ -288,14 +316,14 @@ export const db = {
       abschluesse: Number(k.abschluesse || 0),
       verdientEur: Number(k.verdient_eur || 0),
       stornoQuote: Number(k.storno_quote || 0),
-      kontenMitGleicherAuszahladresse: Number(k.konten_gleiche_adresse || 1),
+      kontenMitGleicherAuszahladresse: Math.max(Number(k.konten_gleiche_adresse || 1), Number(k.konten_gleiche_adresse_neu || 0) + 1),
       refs: Number(k.refs || 0),
       refsGleichesGeraet: Number(k.refs_gleiches_geraet || 0),
       refsAktiv: 0,          // aus buchungen der Geworbenen nachziehen
       ...v,                  // medianDauerSek, erwarteteDauerSek, gleicheAbstaende, stundenAmStueck, anteilHighPayout
       auszahladresseGeaendertVorStd: 999,
       simLand: null, ipLand: null, alterAngabe: 99, ausweisSchonBenutzt: false,
-      auszahladresseAufSperrliste: false,
+      auszahladresseAufSperrliste: !!k.ziel_gesperrt,
     };
   },
 

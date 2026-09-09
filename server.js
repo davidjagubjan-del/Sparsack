@@ -17,6 +17,7 @@ import rateLimit from "express-rate-limit";
 import { pathToFileURL } from "url";
 import { db } from "./db.js";
 import auth, { angemeldet } from "./auth.js";
+import { paypal, tango } from "./auszahlung.js";
 
 const app = express();
 app.set("trust proxy", 1);   // hinter Railway/Render sonst falsche IPs bei Allowlist und Rate-Limit
@@ -170,28 +171,62 @@ const volleUrl = (req) => (process.env.POSTBACK_BASIS || `${req.protocol}://${re
 /* Freigeschaltete Auszahlungswege stehen in der .env: AUSZAHLUNG_AKTIV=amazon,paypal */
 const AKTIV = ipListe(process.env.AUSZAHLUNG_AKTIV);
 
+/* senden(auftrag, ziel) → { status, ref, grund }; status(auftrag) fuer asynchrone Dienste.
+   Das Ziel wird erst unmittelbar vor dem Senden entschluesselt (db.auszahlungZiel). */
+const nichtEingerichtet = async () => { throw new Error("Auszahlungsweg nicht eingerichtet"); };
 const PAYOUTS = {
-  paypal: {
-    aktiv: AKTIV.includes("paypal"), min: 5.0, gebuehr: 0,
-    zugang: { id: process.env.PAYPAL_CLIENT_ID, secret: process.env.PAYPAL_SECRET },
-    senden: async (ziel, betrag) => {/* PayPal Payouts API v1/payments/payouts */},
-  },
-  amazon: {
-    aktiv: AKTIV.includes("amazon"), min: 5.0, gebuehr: 0,
-    zugang: { key: process.env.TANGO_KEY, konto: process.env.TANGO_ACCOUNT },
-    senden: async (ziel, betrag) => {/* Tango Card / Giftbit orders */},
-  },
-  bank: {
-    aktiv: AKTIV.includes("bank"), min: 20.0, gebuehr: 0.35,
-    zugang: { key: process.env.WISE_TOKEN },
-    senden: async (ziel, betrag) => {/* Wise / Stripe Connect payout */},
-  },
-  crypto: {
-    aktiv: AKTIV.includes("crypto"), min: 10.0, gebuehr: 0.5,
-    zugang: { key: process.env.COINBASE_KEY },
-    senden: async (ziel, betrag) => {/* Coinbase Commerce */},
-  },
+  paypal: { aktiv: AKTIV.includes("paypal"), min: 5.0, gebuehr: 0,
+            senden: (a, ziel) => paypal.senden(a, ziel), status: (a) => paypal.status(a) },
+  amazon: { aktiv: AKTIV.includes("amazon"), min: 5.0, gebuehr: 0,
+            senden: (a, ziel) => tango.senden(a, ziel, process.env.TANGO_UTID_AMAZON) },
+  steam:  { aktiv: AKTIV.includes("steam"),  min: 5.0, gebuehr: 0,
+            senden: (a, ziel) => tango.senden(a, ziel, process.env.TANGO_UTID_STEAM) },
+  bank:   { aktiv: AKTIV.includes("bank"),   min: 20.0, gebuehr: 0.35, senden: nichtEingerichtet },   // Wise / Stripe Connect
+  crypto: { aktiv: AKTIV.includes("crypto"), min: 10.0, gebuehr: 0.5,  senden: nichtEingerichtet },   // Coinbase Commerce
 };
+
+/** Auftrag beim Dienst ausfuehren; bei Fehler oder Ablehnung Guthaben zurueckbuchen. Liefert den Endstatus. */
+export async function auszahlungAusfuehren(auftrag) {
+  const m = PAYOUTS[auftrag.methode];
+  let ergebnis;
+  try {
+    const ziel = await db.auszahlungZiel(auftrag.id);        // Klartext nur hier, nur jetzt
+    ergebnis = await m.senden(auftrag, ziel);
+  } catch (e) {
+    await db.protokoll(auftrag.nutzer_id, "auszahlung_fehler",
+      { beleg: auftrag.beleg_nr, methode: auftrag.methode, fehler: String(e.message || e).replace(/\S+@\S+/g, "[mail]").slice(0, 200) });
+    ergebnis = { status: "abgelehnt", grund: "dienst" };
+  }
+  return auszahlungAbschliessen(auftrag, ergebnis);
+}
+
+async function auszahlungAbschliessen(auftrag, { status, ref = null, grund = null }) {
+  const a = await db.auszahlungAbschliessen({ id: auftrag.id, status, anbieterRef: ref });
+  if (!a) return auftrag.status;                              // war schon erledigt — nichts doppelt buchen
+  if (status === "abgelehnt") {
+    await db.gutschreiben({ nutzerId: a.nutzer_id, art: "korrektur", coins: Math.round(Number(a.betrag_eur) * 1000),
+      titel: "Auszahlung fehlgeschlagen – Guthaben zurück", status: "frei", halteStunden: 0 });
+    await db.protokoll(a.nutzer_id, "auszahlung_abgelehnt", { beleg: a.beleg_nr, methode: a.methode, grund, ref });
+  } else if (status === "ausgezahlt") {
+    await db.protokoll(a.nutzer_id, "auszahlung_ausgezahlt", { beleg: a.beleg_nr, methode: a.methode, ref });
+  }
+  return status;
+}
+
+/** Laufende Auftraege beim Dienst nachschauen (PayPal-Batches sind asynchron). Alle 5 Minuten, siehe unten. */
+export async function auszahlungenNachpruefen() {
+  for (const a of await db.auszahlungenOffen()) {
+    const m = PAYOUTS[a.methode];
+    if (!m?.status) continue;
+    try {
+      const e = await m.status(a);
+      if (e.status !== "laeuft") await auszahlungAbschliessen(a, e);
+    } catch (e) {
+      await db.protokoll(a.nutzer_id, "auszahlung_nachpruefung_fehler",
+        { beleg: a.beleg_nr, fehler: String(e.message || e).replace(/\S+@\S+/g, "[mail]").slice(0, 200) });
+    }
+  }
+}
 
 /* ============================================================
    3. BETRUGSERKENNUNG
@@ -385,7 +420,7 @@ app.post("/api/auszahlung", angemeldet, async (req, res) => {
   });
   if (!gedeckt) return res.status(409).json({ fehler: "Bitte versuch es gleich noch einmal." });
 
-  const risiko = risikoPruefen(await db.kennzahlenFuer(userId));
+  const risiko = risikoPruefen(await db.kennzahlenFuer(userId, { ziel: String(ziel).trim() }));
   const auftrag = await db.auszahlungAnlegen({
     nutzerId: userId, methode, ziel: String(ziel).trim(), betrag, gebuehr: m.gebuehr,
     status: risiko.punkte < 30 ? "laeuft" : "pruefung",
@@ -394,8 +429,13 @@ app.post("/api/auszahlung", angemeldet, async (req, res) => {
   await db.risikoMerken({ nutzerId: userId, punkte: risiko.punkte, stufe: risiko.stufe,
     treffer: risiko.treffer, anlass: "auszahlung" });
 
-  if (auftrag.status === "laeuft") await m.senden(String(ziel).trim(), betrag - m.gebuehr);
-  res.json({ belegId: auftrag.beleg_nr, status: auftrag.status });
+  let status = auftrag.status, hinweis;
+  if (status === "laeuft") status = await auszahlungAusfuehren(auftrag);
+  if (status === "abgelehnt")
+    hinweis = "Die Auszahlung hat nicht geklappt. Dein Guthaben ist wieder da – prüf bitte dein Ziel und versuch es später noch einmal.";
+  else if (status === "pruefung")
+    hinweis = "Wir schauen uns diese Auszahlung kurz von Hand an. Du bekommst Bescheid.";
+  res.json({ belegId: auftrag.beleg_nr, status, hinweis });
 });
 
 /** Grobe Formpruefung des Ziels, damit kein Muell an die Zahlungsdienste geht */
@@ -475,4 +515,5 @@ export default app;
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => console.log(`CoinCurb läuft auf Port ${PORT}`));
+  setInterval(() => auszahlungenNachpruefen().catch(() => {}), 5 * 60000).unref();
 }

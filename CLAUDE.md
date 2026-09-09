@@ -9,7 +9,8 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - Node 18+, ESM (`"type": "module"`), Express, PostgreSQL 15+ — kein TypeScript, kein ORM
 - `server.js` — Partner-Postbacks (`PARTNER`: je Anbieter Signaturpruefung, Parameter-Mapping, Antwort; reine Formeln in `signaturen`), Auszahlungen, Betrugserkennung (16 Regeln + harte Sperren)
 - `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung, `netzTyp()` (IPQualityScore, Cache in `ip_netz`)
-- `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`
+- `auszahlung.js` — Zahlungsdienste: PayPal Payouts (`paypal`), Tango Card RaaS (`tango`); bekommen Auftrag + entschlüsseltes Ziel, liefern `{ status, ref, grund }`, werfen bei Dienstfehlern
+- `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`; `auszahlungZiel()` ist die einzige Stelle, die ein Auszahlungsziel entschlüsselt
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien
 - `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); läuft aktuell mit Demo-Daten
@@ -25,7 +26,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 4. **Nutzer-ID nie aus Body/Query nehmen**, immer aus `req.nutzer.id` (Middleware `angemeldet`). Die Auszahlungsroute war genau deshalb schon einmal kritisch verwundbar.
 5. Telefonnummern, Auszahlungsziele, IPs: nur als `hash()` speichern bzw. verschlüsselt, nie loggen. Secrets nur in `.env`, nie in Code, Logs oder Fehlermeldungen.
 6. Postbacks: Signatur zuerst prüfen, `(partner, partner_tx)` ist unique (Replay-Schutz), Antwort an Partner immer `200 "ok"` — auch bei Duplikaten und unbekannter Nutzer-ID.
-7. Auszahlung: erst Minus-Buchung, dann Endstand prüfen, bei < 0 zurückdrehen (Schutz vor Doppelanfragen). Diese Reihenfolge nicht „optimieren".
+7. Auszahlung: erst Minus-Buchung, dann Endstand prüfen, bei < 0 zurückdrehen (Schutz vor Doppelanfragen). Diese Reihenfolge nicht „optimieren". Wird ein Auftrag abgelehnt (Dienstfehler, PayPal DENIED), kommt das Geld als `korrektur`-Buchung zurück; `db.auszahlungAbschliessen` setzt den Status nur aus `laeuft`/`pruefung` heraus, damit nie doppelt zurückgebucht wird.
 8. Fehlermeldungen an Nutzer auf Deutsch, per Du, ohne Technik-Details. Interne Kommentare bleiben im Stil der bestehenden Dateien (Deutsch).
 9. Betrugsregeln (`REGELN` in server.js): Gewichte nur ändern, wenn die Aufgabe es verlangt. Neue Kennzahlen in `db.kennzahlenFuer` ergänzen, Standardwert immer „unauffällig".
 10. Nichts von Apple/Google-Richtlinien Relevantes entfernen: Kontolöschung, Altersgrenze 16+, iOS-Build ohne belohnte App-Installationen (nur Umfragen/Web-Angebote).

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from "vites
 import request from "supertest";
 import app from "../server.js";
 import { db } from "../db.js";
-import { pool, leeren, nutzerAnlegen, token, guthabenSetzen, guthaben, buchungen, sql } from "./hilfen.js";
+import { pool, leeren, nutzerAnlegen, token, guthabenSetzen, guthaben, buchungen, sql, zahlungsMock } from "./hilfen.js";
 
-beforeEach(leeren);
-afterEach(() => vi.restoreAllMocks());
+beforeEach(async () => { await leeren(); vi.stubGlobal("fetch", zahlungsMock()); });   // PayPal antwortet PENDING
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 afterAll(async () => { await db.schliessen(); await pool.end(); });
 
 const anfordern = (n, betrag, extra = {}) =>

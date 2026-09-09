@@ -25,4 +25,15 @@ process.env.BITLABS_IPS = "";
 process.env.CPX_SECRET = "cpx-test-secret";
 process.env.CPX_IPS = "";
 
-process.env.AUSZAHLUNG_AKTIV = "paypal,amazon";
+process.env.AUSZAHLUNG_AKTIV = "paypal,amazon,steam";
+process.env.ZIEL_SCHLUESSEL = "test-ziel-schluessel-test-ziel-schluessel-1234";
+process.env.PAYPAL_UMGEBUNG = "sandbox";
+process.env.PAYPAL_CLIENT_ID = "pp-client";
+process.env.PAYPAL_SECRET = "pp-secret";
+process.env.TANGO_UMGEBUNG = "sandbox";
+process.env.TANGO_PLATFORM = "coincurb-test";
+process.env.TANGO_KEY = "tango-key";
+process.env.TANGO_ACCOUNT = "konto-1";
+process.env.TANGO_CUSTOMER = "kunde-1";
+process.env.TANGO_UTID_AMAZON = "U-AMAZON-DE";
+process.env.TANGO_UTID_STEAM = "U-STEAM-EUR";

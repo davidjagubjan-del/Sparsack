@@ -60,12 +60,26 @@ Fast alle verlangen vor Freischaltung eine erreichbare Webseite, Impressum, Date
 
 ## 2. Auszahlungen freischalten
 
-In `CoinCurb.jsx` bei `PAYOUTS` auf `aktiv: true` setzen, im Backend die Zugangsdaten hinterlegen.
+In der `.env` die Wege eintragen, z. B. `AUSZAHLUNG_AKTIV=amazon,steam,paypal`, dazu die Zugangsdaten:
 
-- **PayPal Payouts** — Business-Konto, API-Freischaltung beantragen
-- **Amazon / Steam / Google Play** — über Tango Card oder Giftbit, nie direkt
-- **SEPA** — Wise Business oder Stripe Connect
-- **Krypto** — Coinbase Commerce oder BitPay
+- **PayPal Payouts** — Business-Konto, Payouts-API beantragen; `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_UMGEBUNG=sandbox|live`.
+  Ein Auftrag = ein Batch mit einem Item, Beleg-Nr als `PayPal-Request-Id` (idempotent). Payouts sind asynchron:
+  der Auftrag bleibt `laeuft`, `anbieter_ref` ist die Batch-ID, alle 5 Minuten fragt der Server nach und setzt
+  `ausgezahlt` oder `abgelehnt`. Bei Ablehnung kommt das Geld als `korrektur`-Buchung zurück.
+- **Amazon / Steam** — über Tango Card (RaaS v2): `TANGO_PLATFORM`, `TANGO_KEY`, `TANGO_ACCOUNT`, `TANGO_CUSTOMER`,
+  `TANGO_UTID_AMAZON`, `TANGO_UTID_STEAM` (UTID des jeweiligen Gutscheins aus dem Tango-Katalog, z. B. Amazon.de in EUR),
+  `TANGO_UMGEBUNG=sandbox|live`. Tango schickt die Mail mit dem Code selbst (`deliveryMethod: EMAIL`);
+  bei uns landet nur die Bestellreferenz, nie der Code.
+- **SEPA** — Wise Business oder Stripe Connect (noch nicht angebunden)
+- **Krypto** — Coinbase Commerce oder BitPay (noch nicht angebunden)
+
+Auszahlungsziele (PayPal-Adresse, Gutschein-Mail) liegen mit `pgp_sym_encrypt` und `ZIEL_SCHLUESSEL` aus der `.env`
+verschlüsselt in der Datenbank; entschlüsselt wird nur unmittelbar vor dem Senden. `ziel_hash` bleibt für die
+Mehrfachkonto-Prüfung. Den Schlüssel nach dem Start nie ändern. Bestehende Datenbanken:
+`psql "$DATABASE_URL" -v ziel_schluessel="$ZIEL_SCHLUESSEL" -f migrationen/003_ziel_verschluesseln.sql`.
+
+Sandbox-Test: Zugangsdaten der Sandbox in die `.env`, Nutzer mit bestätigter Telefonnummer und freiem Guthaben,
+`POST /api/auszahlung` mit `{ methode, ziel, betrag }`, danach `SELECT beleg_nr, status, anbieter_ref FROM auszahlungen`.
 
 ## 3. Betrugserkennung — so ist sie gebaut
 

@@ -40,15 +40,15 @@ Fertig wenn: bekannte Datacenter-IP als `rechenzentrum` erkannt wird und die Reg
 
 ## Block C — Geld raus
 
-**[ ] 8. PayPal Payouts**
+**[x] 8. PayPal Payouts**
 `PAYOUTS.paypal.senden()` gegen die Payouts-API implementieren (Sandbox), `anbieter_ref` und Status `ausgezahlt`/`abgelehnt` zurückschreiben, Fehler in `protokoll`.
 Fertig wenn: Sandbox-Auszahlung durchläuft und der Beleg in `auszahlungen` den PayPal-Batch verweist.
 
-**[ ] 9. Gutscheine über Tango Card**
+**[x] 9. Gutscheine über Tango Card**
 `PAYOUTS.amazon.senden()` + Steam analog. Gutschein-Code NICHT in der DB speichern, nur Referenz; Zustellung per Mail.
 Fertig wenn: Sandbox-Bestellung durchläuft.
 
-**[ ] 10. Auszahlungsziele verschlüsseln**
+**[x] 10. Auszahlungsziele verschlüsseln**
 Spalte `ziel` mit pgcrypto (`pgp_sym_encrypt`) ablegen, Schlüssel aus `.env`, Entschlüsselung nur in `senden()`. `ziel_hash` bleibt für die Mehrfachkonto-Prüfung.
 Fertig wenn: `SELECT ziel FROM auszahlungen` nur Ciphertext zeigt, Auszahlung trotzdem funktioniert.
 
