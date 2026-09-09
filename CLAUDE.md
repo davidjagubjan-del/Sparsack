@@ -7,7 +7,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 ## Stack & Dateien
 
 - Node 18+, ESM (`"type": "module"`), Express, PostgreSQL 15+ — kein TypeScript, kein ORM
-- `server.js` — Partner-Postbacks, Auszahlungen, Betrugserkennung (16 Regeln + harte Sperren)
+- `server.js` — Partner-Postbacks (`PARTNER`: je Anbieter Signaturpruefung, Parameter-Mapping, Antwort; reine Formeln in `signaturen`), Auszahlungen, Betrugserkennung (16 Regeln + harte Sperren)
 - `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`

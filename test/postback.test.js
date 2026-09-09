@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import request from "supertest";
 import app, { ipErlaubt } from "../server.js";
 import { db } from "../db.js";
-import { pool, leeren, nutzerAnlegen, guthaben, buchungen, sql, postbackUrl } from "./hilfen.js";
+import { pool, leeren, nutzerAnlegen, guthaben, buchungen, sql, postback, senden } from "./hilfen.js";
 
 const ADGATE = process.env.ADGATE_SECRET;
 const TOROX = process.env.TOROX_SECRET;
@@ -13,7 +13,7 @@ afterAll(async () => { await db.schliessen(); await pool.end(); });
 describe("Postback — Gutschrift", () => {
   it("gueltige Signatur: bucht 60 % als Coins in Haltefrist und antwortet 200 ok", async () => {
     const n = await nutzerAnlegen();
-    const r = await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "tx-1", payout: "1.50", secret: ADGATE }));
+    const r = await senden(app, "adgate", { user_id: n.id, transaction_id: "tx-1", payout: "1.50", secret: ADGATE });
     expect(r.status).toBe(200);
     expect(r.text).toBe("ok");
 
@@ -30,23 +30,22 @@ describe("Postback — Gutschrift", () => {
 
   it("ungueltige Signatur: 403, nichts gebucht", async () => {
     const n = await nutzerAnlegen();
-    const url = postbackUrl("adgate", { user_id: n.id, transaction_id: "tx-2", payout: "1.00", secret: "falsch" });
-    const r = await request(app).get(url);
+    const r = await senden(app, "adgate", { user_id: n.id, transaction_id: "tx-2", payout: "1.00", secret: "falsch" });
     expect(r.status).toBe(403);
     expect(await buchungen(n.id)).toHaveLength(0);
 
-    // Signatur stimmt, aber payout wurde nachtraeglich veraendert
-    const echt = postbackUrl("adgate", { user_id: n.id, transaction_id: "tx-3", payout: "1.00", secret: ADGATE });
-    const r2 = await request(app).get(echt.replace("payout=1.00", "payout=100.00"));
+    // Signatur stimmt, aber payout wurde nachtraeglich veraendert (Lootably: Hash deckt revenue ab)
+    const echt = postback("lootably", { user_id: n.id, transaction_id: "tx-3", payout: "1.00", secret: process.env.LOOTABLY_SECRET });
+    const r2 = await request(app).get(echt.url.replace("payout=1.00", "payout=100.00"));
     expect(r2.status).toBe(403);
     expect(await buchungen(n.id)).toHaveLength(0);
   });
 
   it("Duplikat: zweite Meldung mit gleicher transaction_id antwortet 200, bucht aber nicht erneut", async () => {
     const n = await nutzerAnlegen();
-    const url = postbackUrl("adgate", { user_id: n.id, transaction_id: "tx-dup", payout: "2.00", secret: ADGATE });
-    expect((await request(app).get(url)).status).toBe(200);
-    const r2 = await request(app).get(url);
+    const f = { user_id: n.id, transaction_id: "tx-dup", payout: "2.00", secret: ADGATE };
+    expect((await senden(app, "adgate", f)).status).toBe(200);
+    const r2 = await senden(app, "adgate", f);
     expect(r2.status).toBe(200);
     expect(r2.text).toBe("ok");
     expect(await buchungen(n.id)).toHaveLength(1);
@@ -55,15 +54,15 @@ describe("Postback — Gutschrift", () => {
 
   it("Duplikate auch bei gleichzeitigen Meldungen (Unique-Index)", async () => {
     const n = await nutzerAnlegen();
-    const url = postbackUrl("adgate", { user_id: n.id, transaction_id: "tx-race", payout: "1.00", secret: ADGATE });
-    const rs = await Promise.all([1, 2, 3, 4].map(() => request(app).get(url)));
+    const f = { user_id: n.id, transaction_id: "tx-race", payout: "1.00", secret: ADGATE };
+    const rs = await Promise.all([1, 2, 3, 4].map(() => senden(app, "adgate", f)));
     for (const r of rs) expect(r.status).toBe(200);
     expect(await buchungen(n.id)).toHaveLength(1);
   });
 
   it("unbekannte oder kaputte user_id: 200 ok, keine Buchung", async () => {
     for (const id of ["00000000-0000-4000-8000-000000000000", "nicht-uuid", ""]) {
-      const r = await request(app).get(postbackUrl("adgate", { user_id: id, transaction_id: "tx-" + id, payout: "1.00", secret: ADGATE }));
+      const r = await senden(app, "adgate", { user_id: id, transaction_id: "tx-" + id, payout: "1.00", secret: ADGATE });
       expect(r.status).toBe(200);
       expect(r.text).toBe("ok");
     }
@@ -76,13 +75,14 @@ describe("Postback — Gutschrift", () => {
 });
 
 describe("Aufgabe 3 — IP-Allowlist", () => {
-  const url = (n, tx) => postbackUrl("torox", { user_id: n.id, transaction_id: tx, payout: "1.00", secret: TOROX });
+  const von = (n, tx, ip) => senden(app, "torox", { user_id: n.id, transaction_id: tx, payout: "1.00", secret: TOROX },
+    ip ? { "X-Forwarded-For": ip } : {});
 
   it("gelistete IPv4 darf, nicht gelistete bekommt 403", async () => {
     const n = await nutzerAnlegen();
-    const ok = await request(app).get(url(n, "t1")).set("X-Forwarded-For", "203.0.113.42");
+    const ok = await von(n, "t1", "203.0.113.42");
     expect(ok.status).toBe(200);
-    const nein = await request(app).get(url(n, "t2")).set("X-Forwarded-For", "198.51.100.7");
+    const nein = await von(n, "t2", "198.51.100.7");
     expect(nein.status).toBe(403);
     expect(nein.text).toMatch(/IP/);
     expect(await buchungen(n.id)).toHaveLength(1);
@@ -90,25 +90,27 @@ describe("Aufgabe 3 — IP-Allowlist", () => {
 
   it("IPv6 wird gegen CIDR geprueft", async () => {
     const n = await nutzerAnlegen();
-    expect((await request(app).get(url(n, "t3")).set("X-Forwarded-For", "2001:db8:1::abcd")).status).toBe(200);
-    expect((await request(app).get(url(n, "t4")).set("X-Forwarded-For", "2001:db9::1")).status).toBe(403);
+    expect((await von(n, "t3", "2001:db8:1::abcd")).status).toBe(200);
+    expect((await von(n, "t4", "2001:db9::1")).status).toBe(403);
   });
 
   it("ohne Proxy-Header zaehlt die echte Verbindungs-IP (localhost ist nicht gelistet)", async () => {
     const n = await nutzerAnlegen();
-    expect((await request(app).get(url(n, "t5"))).status).toBe(403);
+    expect((await von(n, "t5")).status).toBe(403);
   });
 
   it("leere Liste erlaubt weiterhin alles", async () => {
     const n = await nutzerAnlegen();
-    const u = postbackUrl("cpx", { user_id: n.id, transaction_id: "c1", payout: "1.00", secret: process.env.CPX_SECRET });
-    expect((await request(app).get(u).set("X-Forwarded-For", "198.51.100.7")).status).toBe(200);
+    const r = await senden(app, "cpx", { user_id: n.id, transaction_id: "c1", payout: "1.00", secret: process.env.CPX_SECRET },
+      { "X-Forwarded-For": "198.51.100.7" });
+    expect(r.status).toBe(200);
   });
 
   it("Storno-Route haelt sich an dieselbe Liste", async () => {
     const n = await nutzerAnlegen();
-    const u = postbackUrl("torox", { user_id: n.id, transaction_id: "t6", payout: "1.00", secret: TOROX, pfad: "/storno" });
-    expect((await request(app).get(u).set("X-Forwarded-For", "198.51.100.7")).status).toBe(403);
+    const r = await senden(app, "torox", { user_id: n.id, transaction_id: "t6", payout: "1.00", secret: TOROX, pfad: "/storno" },
+      { "X-Forwarded-For": "198.51.100.7" });
+    expect(r.status).toBe(403);
   });
 
   it("ipErlaubt: v4, v6, gemappte Adressen, Einzel-IPs, Muell", () => {
@@ -127,11 +129,11 @@ describe("Aufgabe 3 — IP-Allowlist", () => {
 describe("Storno", () => {
   it("Storno auf freie Buchung bucht den Betrag zurueck", async () => {
     const n = await nutzerAnlegen();
-    await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s1", payout: "2.00", secret: ADGATE }));
+    await senden(app, "adgate", { user_id: n.id, transaction_id: "s1", payout: "2.00", secret: ADGATE });
     await sql(`UPDATE buchungen SET status='frei' WHERE partner_tx='s1'`);   // Haltefrist vorbei
     expect((await guthaben(n.id)).frei).toBe(1200);
 
-    const r = await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s1", payout: "2.00", secret: ADGATE, pfad: "/storno" }));
+    const r = await senden(app, "adgate", { user_id: n.id, transaction_id: "s1", payout: "2.00", secret: ADGATE, pfad: "/storno" });
     expect(r.status).toBe(200);
     const b = await buchungen(n.id);
     expect(b).toHaveLength(2);
@@ -141,10 +143,10 @@ describe("Storno", () => {
     expect((await guthaben(n.id)).gesamt).toBe(-1200);   // Original zaehlt nicht mehr, Rueckbuchung schon
   });
 
-  it("Storno in der Haltefrist: nur als storniert markiert, keine Gegenbuchung", async () => {
+  it("Storno in der Haltefrist (hier ueber state=rejected): nur als storniert markiert, keine Gegenbuchung", async () => {
     const n = await nutzerAnlegen();
-    await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s2", payout: "1.00", secret: ADGATE }));
-    await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s2", payout: "1.00", secret: ADGATE, pfad: "/storno" }));
+    await senden(app, "adgate", { user_id: n.id, transaction_id: "s2", payout: "1.00", secret: ADGATE });
+    await senden(app, "adgate", { user_id: n.id, transaction_id: "s2", payout: "1.00", secret: ADGATE, state: "rejected" });
     const b = await buchungen(n.id);
     expect(b).toHaveLength(1);
     expect(b[0].status).toBe("storniert");
@@ -153,8 +155,8 @@ describe("Storno", () => {
 
   it("Storno mit falscher Signatur: 403, Buchung bleibt", async () => {
     const n = await nutzerAnlegen();
-    await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s3", payout: "1.00", secret: ADGATE }));
-    const r = await request(app).get(postbackUrl("adgate", { user_id: n.id, transaction_id: "s3", payout: "1.00", secret: "falsch", pfad: "/storno" }));
+    await senden(app, "adgate", { user_id: n.id, transaction_id: "s3", payout: "1.00", secret: ADGATE });
+    const r = await senden(app, "adgate", { user_id: n.id, transaction_id: "s3", payout: "1.00", secret: "falsch", pfad: "/storno" });
     expect(r.status).toBe(403);
     expect((await buchungen(n.id))[0].status).toBe("haltefrist");
   });

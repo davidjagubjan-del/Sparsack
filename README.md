@@ -38,8 +38,21 @@ Oben in `CoinCurb.jsx` bei `PARTNER` die **Publisher-ID** einsetzen (öffentlich
 | BitLabs | bitlabs.ai | App-Token |
 | CPX Research | cpx-research.com | App-ID + Secure-Hash |
 
-Bei jedem Anbieter im Dashboard eintragen:
-`https://api.deine-domain.de/postback/<anbieter>?user_id={user_id}&transaction_id={txid}&payout={payout}&signature={hash}`
+Postback-URL je Anbieter im Dashboard eintragen (`https://api.deine-domain.de` = `POSTBACK_BASIS` aus der `.env`).
+Die Platzhalter sind die des jeweiligen Anbieters, die Signaturpruefung steht in `server.js` bei `PARTNER`:
+
+| Anbieter | Postback-URL (an `POSTBACK_BASIS` anhaengen) | Pruefung |
+|---|---|---|
+| AdGate Media | `/postback/adgate?token=<ADGATE_SECRET>&user_id={s1}&transaction_id={conversion_id}&payout={payout}&offer_name={offer_name}&state={state}` | kein Hash: geheimer `token` + IP-Liste |
+| AyeT Studios | `/postback/ayet?user_id={external_identifier}&transaction_id={transaction_id}&payout={payout_usd}&offer_name={offer_name}&chargeback={is_chargeback}` | Header `X-Ayetstudios-Security-Hash`, HMAC-SHA256 mit API-Key |
+| Torox | `/postback/torox` (Torox haengt `id, oid, user_id, payout, o_name, sig` selbst an) | `sig = md5(oid-user_id-secret)` |
+| Lootably | `/postback/lootably?user_id={userID}&transaction_id={transactionID}&ip={ip}&payout={revenue}&reward={currencyReward}&offer_name={offerName}&status={status}&signature={hash}` | `sha256(userID+ip+revenue+currencyReward+secret)`, Antwort `1` |
+| BitLabs | `/postback/bitlabs?user_id=[%USER:UID%]&transaction_id=[%TX%]&payout=[%VALUE:USD%]&type=[%ACTIVITY:TYPE%]&ref=[%REF%]&offer_name=[%OFFER:NAME%]` | `&hash` = HMAC-SHA1 ueber die komplette URL |
+| CPX Research | `/postback/cpx?user_id={user_id}&transaction_id={trans_id}&payout={amount_usd}&status={status}&signature={secure_hash}` | `md5(trans_id-securehash)` |
+
+Alle melden den Payout in US-Dollar; `USD_EUR` in der `.env` rechnet um, davon bekommt der Nutzer 60 % als Coins.
+Rueckbuchungen erkennt der Server am jeweiligen Partner-Signal (`state=rejected`, `is_chargeback=1`, negativer Payout,
+`status=0`, `ACTIVITY:TYPE=RECONCILIATION`, `status=2`); zusaetzlich gibt es `/postback/<anbieter>/storno`.
 
 Fast alle verlangen vor Freischaltung eine erreichbare Webseite, Impressum, Datenschutzerklärung und AGB. Ohne Gewerbe bekommst du keine Verträge.
 

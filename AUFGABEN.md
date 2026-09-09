@@ -26,7 +26,7 @@ Fertig wenn: `npm test` grün läuft. (Früh machen — alle weiteren Aufgaben b
 
 ## Block B — Geld rein (je Partner eine Aufgabe)
 
-**[ ] 5. Partner-Signaturen exakt nach Anbieter-Doku**
+**[x] 5. Partner-Signaturen exakt nach Anbieter-Doku**
 Die drei generischen Signatur-Varianten in `signaturOk()` durch je eine geprüfte Implementierung pro Partner ersetzen (AdGate, AyeT, Torox, Lootably, BitLabs, CPX). Webrecherche in der jeweiligen Postback-Doku, Parameter-Namen der Anbieter auf unsere Query-Namen mappen.
 Fertig wenn: pro Partner ein Test mit einem Beispiel-Postback aus der Doku grün ist.
 

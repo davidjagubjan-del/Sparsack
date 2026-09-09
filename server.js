@@ -50,14 +50,116 @@ app.use(auth);               // Login-Routen aus auth.js
 const ipListe = (env, standard = "") =>
   (env ?? standard).split(",").map((x) => x.trim()).filter(Boolean);
 
+/* Alle sechs Partner melden ihren Payout in US-Dollar. Umrechnung in Euro ueber USD_EUR aus der .env,
+   danach gilt wie ueberall: 1.000 Coins = 1,00 €. */
+const USD_EUR = Number(process.env.USD_EUR || 0.9);
+
+/* Je Partner: Signaturpruefung exakt nach Anbieter-Doku, Mapping der Anbieter-Parameter auf unsere Namen,
+   erwartete Antwort. `url` ist die Postback-URL, die im Dashboard des Anbieters eingetragen wird
+   (Platzhalter in der Schreibweise des Anbieters). Alle lesen ihre Werte aus dem Query-String. */
 const PARTNER = {
-  adgate:   { secret: process.env.ADGATE_SECRET,   ips: ipListe(process.env.ADGATE_IPS, "204.13.156.0/24"), sig: "md5_konkat" },
-  ayet:     { secret: process.env.AYET_SECRET,     ips: ipListe(process.env.AYET_IPS),     sig: "sha256_hmac" },
-  torox:    { secret: process.env.TOROX_SECRET,    ips: ipListe(process.env.TOROX_IPS),    sig: "md5_konkat" },
-  lootably: { secret: process.env.LOOTABLY_SECRET, ips: ipListe(process.env.LOOTABLY_IPS), sig: "sha256_hmac" },
-  bitlabs:  { secret: process.env.BITLABS_SECRET,  ips: ipListe(process.env.BITLABS_IPS),  sig: "sha256_url" },
-  cpx:      { secret: process.env.CPX_SECRET,      ips: ipListe(process.env.CPX_IPS),      sig: "md5_konkat" },
+  adgate: {
+    // AdGate Media (heute Prodege Performance) — docs.prodegeads.com/postbacks/postback-information
+    // Kein Hash. Schutz laut Doku: IP-Liste der AdGate-Server + eine URL, die nur AdGate kennt.
+    // Wir haengen dafuer einen geheimen token an; {state} = approved | rejected | pending.
+    secret: process.env.ADGATE_SECRET,
+    ips: ipListe(process.env.ADGATE_IPS,
+      "52.42.57.125,54.186.70.83,52.39.181.185,54.190.14.75,52.11.36.128,54.191.9.88,3.21.111.51,3.135.140.42,3.133.245.65"),
+    url: "/postback/adgate?token=<ADGATE_SECRET>&user_id={s1}&transaction_id={conversion_id}&payout={payout}&offer_name={offer_name}&state={state}",
+    antwort: "ok",
+    pruefen: (req, p) => sicherGleich(String(req.query.token || ""), p.secret),
+    lesen: (q) => ({
+      nutzerId: q.user_id, tx: q.transaction_id, payoutUsd: q.payout, titel: q.offer_name,
+      storno: q.state === "rejected",
+      abwarten: q.state === "pending",          // noch nicht freigegeben: nichts buchen, spaeter kommt "approved"
+    }),
+  },
+  ayet: {
+    // ayeT-Studios — docs.ayetstudios.com → Callbacks → "HMAC Security Hash"
+    // Header X-Ayetstudios-Security-Hash = HMAC-SHA256(API-Key, alphabetisch sortierter Query-String, form-encoded).
+    // Gilt fuer ALLE Parameter der URL; {is_chargeback}=1 bei Rueckbuchung, {payout_usd} in USD.
+    secret: process.env.AYET_SECRET,           // = Publisher-API-Key aus den Account-Einstellungen
+    ips: ipListe(process.env.AYET_IPS),
+    url: "/postback/ayet?user_id={external_identifier}&transaction_id={transaction_id}&payout={payout_usd}&offer_name={offer_name}&chargeback={is_chargeback}",
+    antwort: "ok",
+    pruefen: (req, p) => sicherGleich(signaturen.ayet(rohQuery(req), p.secret),
+      String(req.headers["x-ayetstudios-security-hash"] || "")),
+    lesen: (q) => ({ nutzerId: q.user_id, tx: q.transaction_id, payoutUsd: q.payout, titel: q.offer_name,
+      storno: q.chargeback === "1" }),
+  },
+  torox: {
+    // Torox (frueher OfferToro) — Postback-Doku im Publisher-Dashboard; Format wie OfferToro:
+    // feste Parameter id, oid, user_id, amount, payout, o_name, sig mit sig = md5(oid-user_id-APP_KEY).
+    // Der Hash deckt payout NICHT ab — deshalb hier unbedingt TOROX_IPS aus dem Dashboard setzen.
+    // Rueckbuchungen kommen als negativer payout mit derselben id.
+    secret: process.env.TOROX_SECRET,          // = Secret Key der App
+    ips: ipListe(process.env.TOROX_IPS),
+    url: "/postback/torox   (Torox haengt seine Parameter selbst an)",
+    antwort: "ok",
+    pruefen: (req, p) => sicherGleich(signaturen.torox(req.query.oid, req.query.user_id, p.secret), String(req.query.sig || "")),
+    lesen: (q) => ({ nutzerId: q.user_id, tx: q.id, payoutUsd: q.payout, titel: q.o_name,
+      storno: Number(q.payout) < 0 }),
+  },
+  lootably: {
+    // Lootably — documentation.lootably.com/docs/postbacks, github.com/lootably/lootably-postback-hash
+    // {hash} = sha256(userID + ip + revenue + currencyReward + Postback-Secret), ohne Trennzeichen.
+    // {status}: 1 = Abschluss, 0 = Rueckbuchung. Antwort muss der Body "1" sein.
+    secret: process.env.LOOTABLY_SECRET,       // = Postback Secret des Placements
+    ips: ipListe(process.env.LOOTABLY_IPS),
+    url: "/postback/lootably?user_id={userID}&transaction_id={transactionID}&ip={ip}&payout={revenue}&reward={currencyReward}&offer_name={offerName}&status={status}&signature={hash}",
+    antwort: "1",
+    pruefen: (req, p) => sicherGleich(signaturen.lootably(req.query, p.secret), String(req.query.signature || "")),
+    lesen: (q) => ({ nutzerId: q.user_id, tx: q.transaction_id, payoutUsd: q.payout, titel: q.offer_name,
+      storno: q.status === "0" }),
+  },
+  bitlabs: {
+    // BitLabs — developer.bitlabs.ai/docs/securing-callbacks-through-hashing
+    // &hash = HMAC-SHA1(App-Secret, komplette Callback-URL inkl. Schema+Host bis vor "&hash=").
+    // [%ACTIVITY:TYPE%] = COMPLETE | SCREENOUT | START_BONUS | RECONCILIATION; bei RECONCILIATION
+    // verweist [%REF%] auf die urspruengliche Transaktion (Werte koennen negativ sein).
+    secret: process.env.BITLABS_SECRET,        // = App Secret
+    ips: ipListe(process.env.BITLABS_IPS, "20.76.54.40/29,18.199.243.90,18.157.62.114,18.193.24.206"),
+    url: "/postback/bitlabs?user_id=[%USER:UID%]&transaction_id=[%TX%]&payout=[%VALUE:USD%]&type=[%ACTIVITY:TYPE%]&ref=[%REF%]&offer_name=[%OFFER:NAME%]",
+    antwort: "ok",
+    pruefen: (req, p) => sicherGleich(signaturen.bitlabs(volleUrl(req), p.secret), String(req.query.hash || "")),
+    lesen: (q) => ({ nutzerId: q.user_id, tx: q.transaction_id, payoutUsd: q.payout, titel: q.offer_name,
+      storno: q.type === "RECONCILIATION" || Number(q.payout) < 0,
+      stornoTx: q.ref || q.transaction_id }),
+  },
+  cpx: {
+    // CPX Research — Postback-Einstellungen im Publisher-Dashboard
+    // {secure_hash} = md5({trans_id}-App-Secure-Hash); {status}: 1 = abgeschlossen, 2 = storniert; {amount_usd} in USD.
+    // Der Hash deckt user_id und Betrag NICHT ab — CPX_IPS aus dem Dashboard setzen.
+    secret: process.env.CPX_SECRET,            // = Secure Hash der App
+    ips: ipListe(process.env.CPX_IPS),
+    url: "/postback/cpx?user_id={user_id}&transaction_id={trans_id}&payout={amount_usd}&status={status}&signature={secure_hash}",
+    antwort: "ok",
+    pruefen: (req, p) => sicherGleich(signaturen.cpx(req.query.transaction_id, p.secret), String(req.query.signature || "")),
+    lesen: (q) => ({ nutzerId: q.user_id, tx: q.transaction_id, payoutUsd: q.payout, titel: q.offer_name || "Umfrage",
+      storno: q.status === "2" }),
+  },
 };
+
+/** Die reinen Signaturformeln — je eine pro Anbieter, testbar ohne HTTP. */
+export const signaturen = {
+  /** HMAC-SHA256 ueber die alphabetisch sortierten Parameter, form-encoded (Leerzeichen = "+"). */
+  ayet: (query, apiKey) => {
+    const paare = [...new URLSearchParams(query)].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    return crypto.createHmac("sha256", apiKey).update(new URLSearchParams(paare).toString()).digest("hex");
+  },
+  torox: (oid, userId, key) => md5(`${oid}-${userId}-${key}`),
+  lootably: (q, secret) => sha256(`${q.user_id ?? ""}${q.ip ?? ""}${q.payout ?? ""}${q.reward ?? ""}${secret}`),
+  /** HMAC-SHA1 ueber die komplette URL bis vor "&hash=" — unveraendert, nicht neu kodieren. */
+  bitlabs: (url, secret) => crypto.createHmac("sha1", secret).update(url.split("&hash=")[0]).digest("hex"),
+  cpx: (transId, secureHash) => md5(`${transId}-${secureHash}`),
+};
+const md5 = (t) => crypto.createHash("md5").update(String(t)).digest("hex");
+const sha256 = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+
+/** Query-String so, wie er ankam (ohne fuehrendes "?") */
+const rohQuery = (req) => req.originalUrl.split("?").slice(1).join("?");
+/** Oeffentliche URL dieses Aufrufs — hinter einem Proxy aus POSTBACK_BASIS (z.B. https://api.deine-domain.de) */
+const volleUrl = (req) => (process.env.POSTBACK_BASIS || `${req.protocol}://${req.get("host")}`) + req.originalUrl;
 
 /* ============================================================
    2. AUSZAHLUNGEN
@@ -182,66 +284,58 @@ function risikoPruefen(k) {
 function signaturOk(partnerId, req) {
   const p = PARTNER[partnerId];
   if (!p || !p.secret) return false;
-  const q = req.query;
-  if (p.sig === "md5_konkat") {
-    const soll = crypto.createHash("md5")
-      .update(`${q.user_id}${q.transaction_id}${q.payout}${p.secret}`).digest("hex");
-    return sicherGleich(soll, String(q.signature || ""));
-  }
-  if (p.sig === "sha256_hmac") {
-    const soll = crypto.createHmac("sha256", p.secret)
-      .update(req.originalUrl.split("&signature=")[0]).digest("hex");
-    return sicherGleich(soll, String(q.signature || ""));
-  }
-  return false;
+  try { return p.pruefen(req, p) === true; } catch { return false; }
 }
 
 function sicherGleich(a, b) {
-  const A = Buffer.from(a), B = Buffer.from(b);
+  const A = Buffer.from(String(a)), B = Buffer.from(String(b));
   return A.length === B.length && crypto.timingSafeEqual(A, B);
 }
 
-app.get("/postback/:partner", async (req, res) => {
+/* Reihenfolge fest: Partner bekannt → IP → Signatur → Parameter lesen → buchen.
+   Antwort an den Partner ist bei Duplikaten und unbekannter Nutzer-ID trotzdem 200 (sonst wiederholt er). */
+app.get("/postback/:partner", (req, res) => postbackAnnehmen(req, res, false));
+/* Eigene Storno-URL fuer Partner, die Rueckbuchungen an eine zweite Adresse schicken koennen */
+app.get("/postback/:partner/storno", (req, res) => postbackAnnehmen(req, res, true));
+
+async function postbackAnnehmen(req, res, stornoErzwingen) {
   const { partner } = req.params;
-  if (!PARTNER[partner]) return res.status(404).send("unbekannter Partner");
-  if (!ipErlaubt(req.ip, PARTNER[partner].ips)) return res.status(403).send("IP nicht erlaubt");
+  const p = PARTNER[partner];
+  if (!p) return res.status(404).send("unbekannter Partner");
+  if (!ipErlaubt(req.ip, p.ips)) return res.status(403).send("IP nicht erlaubt");
   if (!signaturOk(partner, req)) return res.status(403).send("Signatur falsch");
 
-  const { user_id, transaction_id, payout, offer_name } = req.query;
-  if (!transaction_id) return res.status(400).send("transaction_id fehlt");
+  const m = p.lesen(req.query);
+  if (!m.tx) return res.status(400).send("transaction_id fehlt");
+
+  if (stornoErzwingen || m.storno) {
+    await db.stornieren(partner, m.stornoTx || m.tx);   // Guthaben darf ins Minus gehen
+    return res.send(p.antwort);
+  }
+  if (m.abwarten) return res.send(p.antwort);
 
   // Doppelte Meldungen abweisen (partner + transaction_id unique in der DB)
-  if (await db.transaktionExistiert(partner, transaction_id)) return res.send("ok"); // Partner will 200
+  if (await db.transaktionExistiert(partner, m.tx)) return res.send(p.antwort);
   // unbekannte oder kaputte ID: nichts gutschreiben, aber Partner-Wiederholung stoppen
-  if (!UUID.test(String(user_id || "")) || !(await db.nutzer(user_id))) return res.send("ok");
+  if (!UUID.test(String(m.nutzerId || "")) || !(await db.nutzer(m.nutzerId))) return res.send(p.antwort);
 
-  // payout kommt vom Partner in Euro; bei USD-Partnern hier zusaetzlich umrechnen
-  const coins = Math.round(Number(payout) * 1000 * ANTEIL_NUTZER);
+  const eur = Number(m.payoutUsd) * USD_EUR;
+  const coins = Math.round(eur * 1000 * ANTEIL_NUTZER);
   if (!Number.isFinite(coins) || coins <= 0) return res.status(400).send("payout fehlt");
 
-  const risiko = risikoPruefen(await db.kennzahlenFuer(user_id));
+  const risiko = risikoPruefen(await db.kennzahlenFuer(m.nutzerId));
   await db.gutschreiben({
-    nutzerId: user_id, art: "aufgabe", coins,
-    titel: offer_name, partner, partnerTx: transaction_id,
+    nutzerId: m.nutzerId, art: "aufgabe", coins,
+    titel: m.titel, partner, partnerTx: m.tx,
     status: risiko.stufe === "gesperrt" ? "zurueckgehalten" : "haltefrist",
     halteStunden: risiko.halteStunden ?? 24 * 30,   // Schattensperre: 30 Tage geparkt
     risikoPunkte: risiko.punkte,
   });
-  await db.risikoMerken({ nutzerId: user_id, punkte: risiko.punkte, stufe: risiko.stufe,
+  await db.risikoMerken({ nutzerId: m.nutzerId, punkte: risiko.punkte, stufe: risiko.stufe,
     treffer: risiko.treffer, anlass: "postback" });
 
-  res.send("ok"); // Partner erwartet 200 mit "ok" oder "1"
-});
-
-/* Storno-Postback: Partner zieht eine Buchung zurueck */
-app.get("/postback/:partner/storno", async (req, res) => {
-  const p = PARTNER[req.params.partner];
-  if (!p) return res.status(404).send("unbekannter Partner");
-  if (!ipErlaubt(req.ip, p.ips)) return res.status(403).send("IP nicht erlaubt");
-  if (!signaturOk(req.params.partner, req)) return res.status(403).send("Signatur falsch");
-  await db.stornieren(req.params.partner, req.query.transaction_id); // Guthaben darf ins Minus gehen
-  res.send("ok");
-});
+  res.send(p.antwort);
+}
 
 /* ============================================================
    5. AUSZAHLUNG ANFORDERN
