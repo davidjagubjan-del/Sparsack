@@ -117,6 +117,19 @@ CREATE TABLE auszahlungen (
 CREATE INDEX ON auszahlungen (ziel_hash);
 CREATE INDEX ON auszahlungen (status);
 
+/* ---------- Verhalten (Aufgabenstarts, gemeldet vom Client) ---------- */
+
+CREATE TABLE aufgaben_starts (
+  id                   BIGSERIAL PRIMARY KEY,
+  nutzer_id            UUID NOT NULL REFERENCES nutzer(id) ON DELETE CASCADE,
+  partner              TEXT NOT NULL,
+  angebot              TEXT,                         -- Angebots-ID oder -Name des Partners
+  erwartete_dauer_sek  INT,                          -- was der Partner/Client als Dauer angibt
+  gestartet            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON aufgaben_starts (nutzer_id, gestartet DESC);
+CREATE INDEX ON aufgaben_starts (partner, angebot, gestartet DESC);
+
 /* ---------- Betrug ---------- */
 
 CREATE TABLE risiko_verlauf (

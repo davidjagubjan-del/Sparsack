@@ -13,6 +13,7 @@ import helmet from "helmet";
 import cors from "cors";
 import crypto from "crypto";
 import ipRangeCheck from "ip-range-check";
+import rateLimit from "express-rate-limit";
 import { pathToFileURL } from "url";
 import { db } from "./db.js";
 import auth, { angemeldet } from "./auth.js";
@@ -37,6 +38,7 @@ app.use(cors({
 
 app.use(express.json({ limit: "50kb" }));
 app.use(auth);               // Login-Routen aus auth.js
+const startBremse = rateLimit({ windowMs: 15 * 60000, limit: 300, standardHeaders: true });
 
 /* ============================================================
    1. PARTNER — Postback-Zugangsdaten
@@ -412,6 +414,19 @@ function zielOk(methode, ziel = "") {
 app.get("/api/security", angemeldet, async (req, res) => {
   const risiko = risikoPruefen(await db.kennzahlenFuer(req.nutzer.id));
   res.json({ punkte: risiko.punkte, stufe: risiko.stufe, signale: risiko.texte });
+});
+
+/* Aufgabenstart vom Client — Grundlage fuer Dauer, Taktung und Pausen in der Betrugserkennung */
+app.post("/api/aufgabe/start", angemeldet, startBremse, async (req, res) => {
+  const partner = String(req.body.partner || "");
+  if (!PARTNER[partner]) return res.status(400).json({ fehler: "Diesen Anbieter kennen wir nicht." });
+  const angebot = req.body.angebot == null ? null : String(req.body.angebot).slice(0, 120);
+  const dauer = Number(req.body.erwarteteDauerSek);
+  await db.aufgabeGestartet({
+    nutzerId: req.nutzer.id, partner, angebot,
+    erwarteteDauerSek: Number.isFinite(dauer) && dauer > 0 ? Math.min(Math.round(dauer), 86400) : null,
+  });
+  res.json({ ok: true });
 });
 
 app.get("/api/walls", angemeldet, async (req, res) => {

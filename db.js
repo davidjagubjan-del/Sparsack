@@ -153,6 +153,92 @@ export const db = {
     return Number(r.s);   // 'pruefung' zaehlt mit, sonst umgeht man das Tageslimit ueber viele Anfragen
   },
 
+  /* ---------- Verhalten ---------- */
+
+  aufgabeGestartet: ({ nutzerId, partner, angebot, erwarteteDauerSek }) =>
+    q(`INSERT INTO aufgaben_starts (nutzer_id, partner, angebot, erwartete_dauer_sek) VALUES ($1,$2,$3,$4)`,
+      [nutzerId, partner, angebot, erwarteteDauerSek]),
+
+  /**
+   * Verhaltens-Kennzahlen aus Aufgabenstarts und Abschluessen.
+   * Dauer = Abschluss (Buchung) minus letzter Start desselben Nutzers beim selben Partner (max. 24 h davor).
+   * Erwartete Dauer: was andere Nutzer fuer dieselben Angebote brauchen (ab 5 Messungen),
+   * sonst der beim Start gemeldete Wert, sonst 999 (= unauffaellig).
+   */
+  verhaltenFuer: async (nutzerId) => {
+    const v = await eine(`
+      WITH meine AS (
+        SELECT b.erstellt, b.coins, s.gestartet, s.angebot, s.erwartete_dauer_sek,
+               EXTRACT(epoch FROM b.erstellt - s.gestartet) AS dauer
+          FROM buchungen b
+          LEFT JOIN LATERAL (
+            SELECT gestartet, angebot, erwartete_dauer_sek FROM aufgaben_starts s
+             WHERE s.nutzer_id = b.nutzer_id AND s.partner = b.partner
+               AND s.gestartet <= b.erstellt AND s.gestartet > b.erstellt - interval '24 hours'
+             ORDER BY s.gestartet DESC LIMIT 1) s ON TRUE
+         WHERE b.nutzer_id = $1 AND b.art = 'aufgabe'
+         ORDER BY b.erstellt DESC LIMIT 20
+      ),
+      andere AS (
+        SELECT EXTRACT(epoch FROM b.erstellt - s.gestartet) AS dauer
+          FROM buchungen b
+          JOIN LATERAL (
+            SELECT gestartet, angebot FROM aufgaben_starts s
+             WHERE s.nutzer_id = b.nutzer_id AND s.partner = b.partner
+               AND s.gestartet <= b.erstellt AND s.gestartet > b.erstellt - interval '24 hours'
+             ORDER BY s.gestartet DESC LIMIT 1) s ON TRUE
+         WHERE b.nutzer_id <> $1 AND b.art = 'aufgabe' AND b.erstellt > now() - interval '30 days'
+           AND s.angebot IN (SELECT angebot FROM meine WHERE angebot IS NOT NULL)
+      ),
+      abstaende AS (
+        SELECT EXTRACT(epoch FROM erstellt - lag(erstellt) OVER (ORDER BY erstellt)) AS gap
+          FROM (SELECT erstellt FROM buchungen WHERE nutzer_id = $1 AND art = 'aufgabe'
+                 ORDER BY erstellt DESC LIMIT 12) x
+      ),
+      ereignisse AS (
+        SELECT erstellt AS t FROM buchungen WHERE nutzer_id = $1 AND erstellt > now() - interval '7 days'
+        UNION ALL
+        SELECT gestartet FROM aufgaben_starts WHERE nutzer_id = $1 AND gestartet > now() - interval '7 days'
+      ),
+      sitzungen AS (
+        SELECT t, SUM(neu) OVER (ORDER BY t) AS nr FROM (
+          SELECT t, CASE WHEN lag(t) OVER (ORDER BY t) IS NULL
+                           OR t - lag(t) OVER (ORDER BY t) > interval '30 minutes' THEN 1 ELSE 0 END AS neu
+            FROM ereignisse) y
+      ),
+      schwelle AS (
+        SELECT percentile_cont(0.75) WITHIN GROUP (ORDER BY coins) AS p75, COUNT(*) AS n
+          FROM buchungen WHERE art = 'aufgabe' AND erstellt > now() - interval '30 days'
+      )
+      SELECT
+        (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dauer) FROM meine WHERE dauer IS NOT NULL) AS median_dauer,
+        (SELECT COUNT(*) FROM meine WHERE dauer IS NOT NULL)                                        AS n_dauer,
+        (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dauer) FROM andere)                     AS erwartet_andere,
+        (SELECT COUNT(*) FROM andere)                                                               AS n_andere,
+        (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY erwartete_dauer_sek) FROM meine
+          WHERE erwartete_dauer_sek IS NOT NULL)                                                    AS erwartet_gemeldet,
+        (SELECT COUNT(*) FROM abstaende WHERE gap IS NOT NULL)                                      AS n_gaps,
+        (SELECT stddev_pop(gap) / NULLIF(avg(gap), 0) FROM abstaende WHERE gap IS NOT NULL)         AS gap_cv,
+        (SELECT avg(gap) FROM abstaende WHERE gap IS NOT NULL)                                      AS gap_avg,
+        (SELECT COALESCE(MAX(h), 0) FROM
+          (SELECT EXTRACT(epoch FROM max(t) - min(t)) / 3600 AS h FROM sitzungen GROUP BY nr) z)   AS stunden_am_stueck,
+        (SELECT CASE WHEN (SELECT n FROM schwelle) < 20 THEN 0
+                     ELSE COUNT(*) FILTER (WHERE coins >= (SELECT p75 FROM schwelle))::float / GREATEST(COUNT(*), 1) END
+           FROM meine)                                                                              AS anteil_high_payout
+      `, [nutzerId]);
+
+    const genugMessungen = Number(v.n_dauer) >= 3;          // unter 3 Messungen kein Urteil
+    const erwartet = Number(v.n_andere) >= 5 ? Number(v.erwartet_andere)
+                   : v.erwartet_gemeldet != null ? Number(v.erwartet_gemeldet) : 999;
+    return {
+      medianDauerSek: genugMessungen ? Math.round(Number(v.median_dauer)) : 999,
+      erwarteteDauerSek: genugMessungen ? Math.round(erwartet) : 999,
+      gleicheAbstaende: Number(v.n_gaps) >= 5 && Number(v.gap_cv) < 0.05 && Number(v.gap_avg) < 3600,
+      stundenAmStueck: Number(v.stunden_am_stueck || 0),
+      anteilHighPayout: Number(v.anteil_high_payout || 0),
+    };
+  },
+
   /* ---------- Kennzahlen für die Betrugserkennung ---------- */
 
   kennzahlenFuer: async (nutzerId) => {
@@ -182,6 +268,7 @@ export const db = {
         (SELECT COUNT(*) FROM nutzer w JOIN nutzer_geraet ng ON ng.nutzer_id=w.id
           WHERE w.geworben_von=$1 AND ng.geraet_id IN (SELECT geraet_id FROM g))AS refs_gleiches_geraet
       `, [nutzerId]);
+    const v = await db.verhaltenFuer(nutzerId);
 
     return {
       kontenAufGeraet: Number(k.konten_auf_geraet || 1),
@@ -198,11 +285,7 @@ export const db = {
       refs: Number(k.refs || 0),
       refsGleichesGeraet: Number(k.refs_gleiches_geraet || 0),
       refsAktiv: 0,          // aus buchungen der Geworbenen nachziehen
-      medianDauerSek: 999,   // Aufgabenstart mitloggen, dann hier auswerten
-      erwarteteDauerSek: 999,
-      gleicheAbstaende: false,
-      stundenAmStueck: 0,
-      anteilHighPayout: 0,
+      ...v,                  // medianDauerSek, erwarteteDauerSek, gleicheAbstaende, stundenAmStueck, anteilHighPayout
       auszahladresseGeaendertVorStd: 999,
       simLand: null, ipLand: null, alterAngabe: 99, ausweisSchonBenutzt: false,
       auszahladresseAufSperrliste: false,

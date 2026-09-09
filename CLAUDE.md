@@ -11,6 +11,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `auth.js` — Registrierung, Login, Apple-Login, E-Mail/SMS-Codes, Token-Rotation, Kontolöschung
 - `db.js` — einzige Stelle mit SQL; exportiert `db` und `hash()`
 - `schema.sql` — Tabellen; einspielen mit `psql "$DATABASE_URL" -f schema.sql`
+- `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien
 - `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); läuft aktuell mit Demo-Daten
 - Start: `npm install && npm start` — bricht ohne gültige `.env` bewusst ab (siehe `.env.example`)
 - `server.js` exportiert die App (`export default app`) und lauscht nur beim direkten Start; Tests importieren sie

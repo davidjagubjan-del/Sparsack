@@ -30,7 +30,7 @@ Fertig wenn: `npm test` grün läuft. (Früh machen — alle weiteren Aufgaben b
 Die drei generischen Signatur-Varianten in `signaturOk()` durch je eine geprüfte Implementierung pro Partner ersetzen (AdGate, AyeT, Torox, Lootably, BitLabs, CPX). Webrecherche in der jeweiligen Postback-Doku, Parameter-Namen der Anbieter auf unsere Query-Namen mappen.
 Fertig wenn: pro Partner ein Test mit einem Beispiel-Postback aus der Doku grün ist.
 
-**[ ] 6. Verhaltens-Kennzahlen füllen**
+**[x] 6. Verhaltens-Kennzahlen füllen**
 Aufgabenstart clientseitig melden (`POST /api/aufgabe/start`), Tabelle dafür ergänzen, in `db.kennzahlenFuer` echte Werte für `medianDauerSek`, `gleicheAbstaende`, `stundenAmStueck`, `anteilHighPayout` berechnen.
 Fertig wenn: Regeln `zu_schnell` und `taktung` in Tests mit konstruierten Daten anschlagen.
 

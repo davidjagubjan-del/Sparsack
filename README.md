@@ -22,6 +22,8 @@ curl localhost:3000/api/ich -H "authorization: Bearer <zugang>"  # -> Name, Coin
 
 Die Extensions `pgcrypto` und `citext` legt `schema.sql` selbst an; dafuer braucht der DB-Nutzer beim ersten Einspielen Superuser-Rechte, oder du legst sie vorher einmal als `postgres` an.
 
+Bestehende Datenbank nach einem Update: die Dateien in `migrationen/` der Reihe nach einspielen.
+
 Tests: zweite Datenbank anlegen (`createdb coincurb_test`), `TEST_DATABASE_URL` in die `.env`, dann `npm test`.
 Die Test-Datenbank wird bei jedem Lauf geleert und aus `schema.sql` neu aufgebaut.
 
@@ -74,7 +76,7 @@ In `CoinCurb.jsx` bei `PAYOUTS` auf `aktiv: true` setzen, im Backend die Zugangs
 | Bereich | Beispiele |
 |---|---|
 | Gerät & Netz | zweites Konto auf demselben Gerät (45), VPN oder Server-IP (30), Emulator (40) |
-| Verhalten | unrealistisch schnelle Abschlüsse (35), immer gleiche Zeitabstände = Bot (20) |
+| Verhalten | unrealistisch schnelle Abschlüsse (35), immer gleiche Zeitabstände = Bot (20), über 14 Std ohne Pause (15), nur die teuersten Angebote (10) |
 | Geld | junges Konto mit hohem Verdienst (25), hohe Storno-Quote (30), geteilte PayPal-Adresse (50) |
 | Einladungen | Eingeladene teilen Gerät (45), viele tote Einladungen (20) |
 
@@ -84,6 +86,10 @@ Daraus folgt die Behandlung:
 - **30–59** → 7 Tage Haltefrist
 - **60–79** → manuelle Freigabe, Ausweis
 - **ab 80** → gesperrt, Schattensperre (App läuft weiter, Auszahlung nicht)
+
+Die Verhaltenswerte brauchen den Aufgabenstart aus der App: vor dem Öffnen eines Angebots `POST /api/aufgabe/start`
+mit `{ partner, angebot, erwarteteDauerSek }`. Daraus entstehen Dauer je Abschluss (verglichen mit anderen Nutzern
+desselben Angebots), Taktung, Stunden am Stück und der Anteil teurer Angebote.
 
 **Vier Schichten, die unabhängig davon immer greifen:**
 
