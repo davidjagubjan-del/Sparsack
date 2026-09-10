@@ -17,6 +17,7 @@ Alle Aufgaben stehen priorisiert in `AUFGABEN.md` — dort von oben nach unten a
 - `migrationen/` — Nachträge für bestehende Datenbanken (nummeriert, idempotent); jede Schemaänderung landet in beiden Dateien
 - `CoinCurb.jsx` — React-Frontend (eine Datei, eigenes CSS, kein Tailwind); `API_BASE` aus `VITE_API_BASE` oder `window.COINCURB_API_BASE`, leer = Demo-Daten. Fetch-Layer `api()` mit Token-Refresh, Login-Screen, Screens auf `/api/ich`, `/api/walls`, `/api/auszahlung`, `/api/auszahlung/wege`, `/api/verlauf`, `/api/security`; Kontolöschung sichtbar im Tab „Konto“
 - `app/` — Vite + Capacitor um `CoinCurb.jsx` (importiert die Datei aus dem Wurzelverzeichnis, keine Kopie); `app/src/main.jsx` setzt `window.COINCURB_API_BASE`, `COINCURB_PLATTFORM`, `COINCURB_GERAET_ID`, `COINCURB_EMULATOR` aus dem nativen Kontext (`@capacitor/device`); `android/` und `ios/` werden mit `npx cap add` erzeugt und nicht eingecheckt
+- `DEPLOY.md` — Übergabe für den Betrieb: Reihenfolge, Minimal-`.env`, App-Build, Partner-Test, Auszahlungen scharf schalten; `GET /gesund` ist der Health-Check (200 nur mit Datenbank)
 - Start: `npm install && npm start` — bricht ohne gültige `.env` bewusst ab (siehe `.env.example`)
 - `server.js` exportiert die App (`export default app`) und lauscht nur beim direkten Start; Tests importieren sie
 - Auszahlungswege werden über `AUSZAHLUNG_AKTIV`, Partner-IP-Listen über `<PARTNER>_IPS` in der `.env` geschaltet

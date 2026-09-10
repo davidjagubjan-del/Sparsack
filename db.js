@@ -360,6 +360,9 @@ export const db = {
     q(`INSERT INTO protokoll (nutzer_id, aktion, details, wer) VALUES ($1,$2,$3,$4)`,
       [nutzerId, aktion, details, wer]),
 
+  /** Datenbank erreichbar? (Health-Check) */
+  ping: () => q(`SELECT 1`),
+
   /** Verbindungen schliessen (Tests, sauberes Herunterfahren) */
   schliessen: () => pool.end(),
 

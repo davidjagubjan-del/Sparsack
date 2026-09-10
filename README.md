@@ -1,6 +1,7 @@
 # CoinCurb — was noch fehlt, damit es live geht
 
-Zwei Dateien: `CoinCurb.jsx` ist die App, `server.js` das Backend. Alles Geheime gehört ins Backend, nie ins Frontend.
+`CoinCurb.jsx` ist die App, `server.js` das Backend. Alles Geheime gehört ins Backend, nie ins Frontend.
+**Zum Online-Stellen:** `DEPLOY.md` ist die Schritt-für-Schritt-Übergabe für die Technik, `FAHRPLAN.md` der Plan für den Betreiber.
 
 ## 0. Lokal starten
 

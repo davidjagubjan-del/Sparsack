@@ -543,6 +543,12 @@ const walls = {
       .filter((w) => w.url),
 };
 
+/* Health-Check fuer Hoster und Monitoring: 200 nur, wenn die Datenbank antwortet */
+app.get("/gesund", async (req, res) => {
+  try { await db.ping(); res.json({ ok: true }); }
+  catch { res.status(503).json({ ok: false }); }
+});
+
 /* Admin-Bereich: eigenes Passwort, siehe admin.js */
 app.use("/admin", adminRouter({ auszahlungAusfuehren, auszahlungAbschliessen }));
 

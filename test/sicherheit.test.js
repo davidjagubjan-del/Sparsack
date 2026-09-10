@@ -6,6 +6,14 @@ import { pool } from "./hilfen.js";
 
 afterAll(async () => { await db.schliessen(); await pool.end(); });
 
+describe("Health-Check", () => {
+  it("GET /gesund antwortet 200 mit Datenbank", async () => {
+    const r = await request(app).get("/gesund");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ ok: true });
+  });
+});
+
 describe("Aufgabe 2 — helmet + CORS", () => {
   it("setzt Security-Header", async () => {
     const r = await request(app).get("/api/ich");
